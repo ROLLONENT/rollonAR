@@ -2502,7 +2502,7 @@ def api_templates_delete():
 # ==================== DUPLICATE FINDER ====================
 @app.route('/api/duplicates', methods=['POST'])
 @login_required
-def api_duplicates():
+def api_duplicates_v2():
     """Find duplicate records. POST body: {table, fields: [field_names], mode: exact|similar|fuzzy}"""
     d = request.json or {}
     table_name = d.get('table', 'Songs')
