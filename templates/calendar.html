@@ -101,11 +101,8 @@ const C={
       songs.forEach(s=>{
         const cls=s.status.toLowerCase().includes('released')?'cal-released':s.status.toLowerCase().includes('mastered')?'cal-mastered':'cal-other';
         const lbl=s.title.length>18?s.title.substring(0,16)+'...':s.title;
-        html+='<div class="cal-song '+cls+'" onclick="event.stopPropagation();openCalRecord('+s.ri+')" title="'+esc(s.title)+' ('+esc(s.status)+')">'+esc(lbl)+'</div>';
+        html+='<div class="cal-song '+cls+'" onclick="openCalRecord('+s.ri+')" title="'+esc(s.title)+' ('+esc(s.status)+')">'+esc(lbl)+'</div>';
       });
-      // Click empty area to set a song's date to this day
-      const dateStr=this.year+'-'+String(this.month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
-      html+='<div class="cal-add" onclick="event.stopPropagation();C.setDateOnSong(\''+dateStr+'\')" title="Set a song date here">+</div>';
       html+='</div>';
     }
     const tc=firstDay+dim;const rem=7-(tc%7);
@@ -152,50 +149,6 @@ const C={
 };
 
 function openCalRecord(ri){sessionStorage.setItem('open_record',JSON.stringify({ri:ri,table:'songs'}));window.location.href='/songs'}
-
-C.setDateOnSong=function(dateStr){
-  // Search songs to pick which one to set
-  showPromptModal('Set Date: '+dateStr,[
-    {label:'Search for a song',placeholder:'Type song title...'}
-  ],(v)=>{
-    if(!v[0])return;
-    const q=v[0].trim();
-    // Find song by title search
-    fetch('/api/songs?per_page=999').then(r=>r.json()).then(d=>{
-      const recs=d.records||[];
-      const matches=recs.filter(r=>{
-        let t='';for(const h of Object.keys(r)){if(cleanH(h).toLowerCase()==='title')t=r[h]||''}
-        return t.toLowerCase().includes(q.toLowerCase());
-      }).slice(0,10);
-      if(!matches.length){toast('No songs found matching "'+q+'"','error');return}
-      if(matches.length===1){
-        C._applyDate(matches[0],dateStr);
-      } else {
-        // Show picker
-        const opts=matches.map(m=>{
-          let t='';for(const h of Object.keys(m)){if(cleanH(h).toLowerCase()==='title')t=m[h]||''}
-          return {label:t,value:m._row_index};
-        });
-        showPromptModal('Pick Song',[{label:'Which song?',type:'select',options:opts.map(o=>o.label)}],(v2)=>{
-          const pick=opts.find(o=>o.label===v2[0]);
-          if(pick){const rec=matches.find(m=>m._row_index===pick.value);if(rec)C._applyDate(rec,dateStr)}
-        });
-      }
-    });
-  });
-};
-
-C._applyDate=function(rec,dateStr){
-  const field=document.getElementById('cal-field').value;
-  const rawH=C.headers.find(h=>cleanH(h).toLowerCase()===field.toLowerCase())||field;
-  fetch('/api/songs/update',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({field:rawH,row_index:rec._row_index,value:dateStr})
-  }).then(r=>r.json()).then(d=>{
-    if(d.success){toast('Date set');C.load()}
-    else toast(d.error||'Failed','error');
-  });
-};
-
 C.init();
 </script>
 {% endblock %}

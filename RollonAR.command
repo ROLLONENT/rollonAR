@@ -2,7 +2,7 @@
 clear
 echo ""
 echo "  ╔═══════════════════════════════════════╗"
-echo "  ║  ROLLON AR v32e — A&R Operating System ║"
+echo "  ║  ROLLON AR v32d — A&R Operating System ║"
 echo "  ║  http://localhost:5001                ║"
 echo "  ╚═══════════════════════════════════════╝"
 echo ""

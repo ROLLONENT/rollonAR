@@ -4,18 +4,6 @@
 <div class="dashboard">
   <h1 style="font-size:22px;font-weight:700;color:var(--accent);font-family:var(--font-d)">ROLLON AR</h1>
   <p style="color:var(--text-dim);font-size:13px;margin-top:2px">A&amp;R Operating System <span style="color:var(--text-ghost);font-size:11px;margin-left:12px">Cmd+K command palette</span></p>
-
-  <div class="dash-actions" style="display:flex;gap:8px;margin:16px 0;flex-wrap:wrap">
-    <a href="/songs" class="dash-action-btn">Songs</a>
-    <a href="/directory" class="dash-action-btn">Directory</a>
-    <a href="/pitch" class="dash-action-btn">Pitch Builder</a>
-    <a href="/submit" class="dash-action-btn" target="_blank">Submit Form</a>
-    <a href="/invoices" class="dash-action-btn">Invoices</a>
-    <a href="/settings" class="dash-action-btn" style="border-color:var(--border);color:var(--text-dim)">Settings</a>
-  </div>
-
-  <div id="dash-priorities" style="margin-bottom:16px"></div>
-
   <div class="dash-cards">
     <a href="/songs" class="dash-card" style="text-decoration:none;color:inherit">
       <h3>Song Library</h3>
@@ -60,29 +48,6 @@
 fetch('/api/dashboard-stats').then(r=>r.json()).then(d=>{
   // Released count
   if(d.released_count!==undefined)document.getElementById('dash-released').textContent=d.released_count;
-
-  // Today's Priorities
-  const pp=document.getElementById('dash-priorities');
-  if(d.priorities?.length){
-    const colors={danger:'var(--danger)',warning:'var(--warning)',info:'var(--info)',accent:'var(--accent)'};
-    pp.innerHTML='<div style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:8px">Today\'s Priorities</div>'+
-      d.priorities.map(p=>{
-        const c=colors[p.urgency]||'var(--accent)';
-        return `<a href="${p.action}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-raised);border:1px solid var(--border);border-left:3px solid ${c};border-radius:var(--r-md);margin-bottom:6px;text-decoration:none;color:var(--text);font-size:12px;transition:all .12s" onmouseover="this.style.borderColor='${c}'" onmouseout="this.style.borderColor='var(--border)'"><span style="font-size:16px">${p.icon}</span><span>${p.text}</span><span style="margin-left:auto;font-size:10px;color:var(--text-ghost)">→</span></a>`;
-      }).join('');
-  }
-
-  // New submissions badge
-  if(d.new_submissions>0){
-    const pitchCard=document.querySelector('.dash-cards a[href="/pitch"]');
-    if(pitchCard){
-      const badge=document.createElement('div');
-      badge.style.cssText='position:absolute;top:8px;right:8px;background:var(--danger);color:white;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px';
-      badge.textContent=d.new_submissions+' new';
-      pitchCard.style.position='relative';
-      pitchCard.appendChild(badge);
-    }
-  }
 
   // Songs by status chart
   const sc=document.getElementById('chart-status');

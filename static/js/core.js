@@ -8,6 +8,32 @@ try{const stored=localStorage.getItem('pill_colored');if(stored!==null)PILL_COLO
 const NAV_STACK=[];
 function pushNav(ri,table){NAV_STACK.push({ri,table})}
 
+// ---- VIEWSYNC (localStorage + Sheets API persistence) ----
+const ViewSync={
+  _timers:{},
+  load(page,lsKey){
+    // 1. Return localStorage immediately (fast)
+    let local={};
+    try{local=JSON.parse(localStorage.getItem(lsKey)||'{}')}catch(e){}
+    // 2. Fetch from server in background and merge (server wins if newer)
+    fetch('/api/views/'+page).then(r=>r.json()).then(server=>{
+      if(server&&Object.keys(server).length>0){
+        // Merge: server views override local views by name
+        const merged={...local,...server};
+        localStorage.setItem(lsKey,JSON.stringify(merged));
+      }
+    }).catch(()=>{});
+    return local;
+  },
+  save(page,lsKey,views){
+    localStorage.setItem(lsKey,JSON.stringify(views));
+    clearTimeout(this._timers[page]);
+    this._timers[page]=setTimeout(()=>{
+      fetch('/api/views/'+page,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(views)}).catch(()=>{});
+    },2000);
+  }
+};
+
 // ---- TOAST ----
 function toast(msg,type='success'){const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;document.getElementById('toast-container').appendChild(el);setTimeout(()=>el.remove(),3500)}
 
@@ -362,18 +388,22 @@ function renderDetailModal(record,headers,table){
   }
 
   // Details tab
-  html+=`<div id="tab-details" class="modal-tab-content active"><div class="detail-grid">`;
+  const _hideEmpty=localStorage.getItem('rollon_hide_empty')==='true';
+  html+=`<div id="tab-details" class="modal-tab-content active">`;
+  html+=`<div class="detail-toolbar"><label class="hide-empty-toggle"><input type="checkbox" ${_hideEmpty?'checked':''} onchange="toggleHideEmpty(this.checked)"> Hide empty fields</label></div>`;
+  html+=`<div class="detail-grid" ${_hideEmpty?'data-hide-empty="1"':''}>`;
   for(const h of headers){
     const ch=cleanH(h);const chLow=ch.toLowerCase();
     if(tabFields.includes(h))continue;
     const val=record[h]||'';const type=fieldType(h);
+    const isEmpty=!val||!val.trim();
     // ID field is read-only
     if(chLow==='airtable id'||chLow==='system id'){
       if(val){html+=`<div class="detail-label">System ID</div><div class="detail-value" style="font-family:var(--font-m);font-size:11px;color:var(--text-ghost);cursor:pointer" onclick="copyText('${escA(val)}')" title="Click to copy">${esc(val)}</div>`}
       continue;
     }
-    html+=`<div class="detail-label">${esc(ch)}${fieldTip(h)?`<span class="field-tip" title="${escA(fieldTip(h))}">ⓘ</span>`:''}</div>`;
-    html+=`<div class="detail-value editable" data-field="${escA(h)}" data-row="${ri}" data-table="${table}" data-type="${type}" data-current="${escData(val)}" onclick="startEdit(this)">`;
+    html+=`<div class="detail-label${isEmpty?' empty-field':''}">${esc(ch)}${fieldTip(h)?`<span class="field-tip" title="${escA(fieldTip(h))}">ⓘ</span>`:''}</div>`;
+    html+=`<div class="detail-value editable${isEmpty?' empty-field':''}" data-field="${escA(h)}" data-row="${ri}" data-table="${table}" data-type="${type}" data-current="${escData(val)}" onclick="startEdit(this)">`;
     html+=renderDetailValue(val,type,h);
     html+='</div>';
   }
@@ -595,9 +625,9 @@ function songActions(rec,headers){
   if(songUrl)b+=`<button class="btn btn-sm" onclick="window.open('${escA(songUrl)}','_blank')" title="Open song link">🔗 Song URL</button>`;
   b+=`<button class="btn btn-sm" onclick="copyLyrics(${rec._row_index})" title="Copy full lyrics text to clipboard">📋 Lyrics</button>`;
   b+=`<button class="btn btn-sm btn-accent" onclick="calcPubSplits(${rec._row_index})" title="Calculate publishing splits from songwriter credits">🧮 Calc. Pub</button>`;
-  if(pubSplit)b+=`<button class="btn btn-sm" onclick="copyText('${escA(pubSplit)}')" title="Copy publishing split breakdown">📋 Pub Split</button>`;
-  if(labelCopy)b+=`<button class="btn btn-sm" onclick="copyText('${escA(labelCopy)}')" title="Copy label copy text (for DSP metadata)">📋 Label Copy</button>`;
-  if(masterSplit)b+=`<button class="btn btn-sm" onclick="copyText('${escA(masterSplit)}')" title="Copy master ownership split">📋 Master Split</button>`;
+  if(pubSplit)b+=`<button class="btn btn-sm" data-copy="${escA(pubSplit)}" onclick="copyText(this.dataset.copy)" title="Copy publishing split breakdown">📋 Pub Split</button>`;
+  if(labelCopy)b+=`<button class="btn btn-sm" data-copy="${escA(labelCopy)}" onclick="copyText(this.dataset.copy)" title="Copy label copy text (for DSP metadata)">📋 Label Copy</button>`;
+  if(masterSplit)b+=`<button class="btn btn-sm" data-copy="${escA(masterSplit)}" onclick="copyText(this.dataset.copy)" title="Copy master ownership split">📋 Master Split</button>`;
   // Admin at a glance
   if(admin){
     const items=admin.split('\n').filter(x=>x.trim());
@@ -626,6 +656,12 @@ function dirActions(rec,headers){
 }
 function fv(rec,headers,term){for(const h of headers){if(cleanH(h).toLowerCase().includes(term.toLowerCase()))return rec[h]||''}return ''}
 function fvExact(rec,headers,term){for(const h of headers){if(cleanH(h).toLowerCase()===term.toLowerCase())return rec[h]||''}return ''}
+
+function toggleHideEmpty(checked){
+  localStorage.setItem('rollon_hide_empty',checked?'true':'false');
+  const grid=document.querySelector('.detail-grid');
+  if(grid){if(checked)grid.setAttribute('data-hide-empty','1');else grid.removeAttribute('data-hide-empty')}
+}
 
 function copyLyrics(ri){
   fetch('/api/songs/'+ri).then(r=>r.json()).then(rec=>{
@@ -1027,7 +1063,7 @@ if(gs){let deb;gs.addEventListener('input',()=>{clearTimeout(deb);deb=setTimeout
 // ---- UTILITIES ----
 function splitP(v){if(!v)return [];return String(v).split(/\s*\|\s*/).map(p=>p.trim()).filter(p=>p&&p!=='undefined'&&p!=='null')}
 function esc(s){const el=document.createElement('span');el.textContent=s||'';return el.innerHTML}
-function escA(s){return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;')}
+function escA(s){return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,'\\n').replace(/\r/g,'')}
 // Safe encoding for HTML data attributes (no backslash corruption)
 function escData(s){return encodeURIComponent(s||'')}
 function readData(el){return decodeURIComponent(el.dataset.current||'')}

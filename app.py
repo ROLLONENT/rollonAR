@@ -1613,9 +1613,33 @@ def api_invoices():
             except:
                 return jsonify({'headers': [], 'records': [], 'total': 0})
         headers = data[0]; rows = data[1:]
+        # Search
+        search = request.args.get('search', '').strip()
+        indexed = [(i+2, r) for i, r in enumerate(rows)]
+        if search:
+            sl = search.lower()
+            indexed = [(ri, r) for ri, r in indexed if any(sl in str(c).lower() for c in r)]
+        # Sort
+        sort_fields = parse_sort_fields(request.args)
+        if sort_fields:
+            indexed = apply_multi_sort(indexed, headers, sort_fields)
+        # Filters
+        adv_filters = []
+        for i in range(20):
+            col = request.args.get(f'f{i}_col', '').strip()
+            op = request.args.get(f'f{i}_op', 'contains').strip()
+            val = request.args.get(f'f{i}_val', '').strip()
+            if col: adv_filters.append({'col':col,'op':op,'val':val})
+        for f in adv_filters:
+            ci = None
+            for j, h in enumerate(headers):
+                if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
+                    ci = j; break
+            if ci is not None:
+                indexed = apply_filter(indexed, ci, f['op'], f['val'])
         records = []
-        for i, row in enumerate(rows):
-            rec = {'_row_index': i + 2}
+        for ori, row in indexed:
+            rec = {'_row_index': ori}
             for j, h in enumerate(headers):
                 rec[h] = row[j] if j < len(row) else ''
             records.append(rec)
@@ -2117,6 +2141,83 @@ def api_pitch_check_duplicate():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== VIEWS PERSISTENCE (Sheets-backed) ====================
+def _ensure_views_sheet():
+    try:
+        data = sheets.get_all_rows('Views')
+        if data: return True
+    except Exception:
+        pass
+    try:
+        sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': 'Views'}}}]}
+        ).execute()
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Views'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [['Page', 'ViewData', 'Updated']]}
+        ).execute()
+        sheets._invalidate_cache('Views')
+        return True
+    except Exception as e:
+        logging.warning(f"Failed to create Views sheet: {e}")
+        return False
+
+@app.route('/api/views/<page>', methods=['GET'])
+@login_required
+def api_views_get(page):
+    """Load saved views for a page (songs, directory, pitch, invoices)."""
+    try:
+        if not _ensure_views_sheet(): return jsonify({})
+        data = sheets.get_all_rows('Views')
+        if not data or len(data) < 2: return jsonify({})
+        headers = data[0]
+        page_col = find_col(headers, 'page')
+        data_col = find_col(headers, 'viewdata')
+        if page_col is None or data_col is None: return jsonify({})
+        for row in data[1:]:
+            if page_col < len(row) and str(row[page_col]).strip().lower() == page.lower():
+                raw = str(row[data_col]) if data_col < len(row) else '{}'
+                try: return jsonify(json.loads(raw))
+                except Exception: return jsonify({})
+        return jsonify({})
+    except Exception as e:
+        logging.warning(f"Views load {page}: {e}")
+        return jsonify({})
+
+@app.route('/api/views/<page>', methods=['POST'])
+@login_required
+def api_views_save(page):
+    """Save views for a page."""
+    try:
+        if not _ensure_views_sheet(): return jsonify({'error': 'Sheet error'}), 500
+        view_data = json.dumps(request.json or {})
+        data = sheets.get_all_rows('Views')
+        headers = data[0] if data else ['Page', 'ViewData', 'Updated']
+        page_col = find_col(headers, 'page')
+        data_col = find_col(headers, 'viewdata')
+        updated_col = find_col(headers, 'updated')
+        if page_col is None: page_col = 0
+        if data_col is None: data_col = 1
+        # Find existing row for this page
+        for ri, row in enumerate(data[1:] if data else [], start=2):
+            if page_col < len(row) and str(row[page_col]).strip().lower() == page.lower():
+                sheets.update_cell('Views', ri, data_col + 1, view_data)
+                if updated_col is not None:
+                    sheets.update_cell('Views', ri, updated_col + 1, datetime.now().strftime('%Y-%m-%d %H:%M'))
+                return jsonify({'success': True})
+        # New row
+        new_row = [''] * max(len(headers), 3)
+        new_row[page_col] = page
+        new_row[data_col] = view_data
+        if updated_col is not None: new_row[updated_col] = datetime.now().strftime('%Y-%m-%d %H:%M')
+        sheets.append_row('Views', new_row)
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.warning(f"Views save {page}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 # ==================== PLAYLISTS (DISCO replacement) ====================
 import uuid as _uuid
 
@@ -2189,7 +2290,7 @@ def api_playlists_create():
             '|'.join(str(s) for s in song_ids),
             json.dumps(song_data),
             datetime.now().strftime('%Y-%m-%d %H:%M'),
-            session.get('role', 'admin'),
+            {'admin':'Captain','assistant':'Co-Pilot'}.get(session.get('role','admin'), session.get('role','admin')),
             '0', 'Active'
         ]
         sheets.append_row('Playlists', new_row)

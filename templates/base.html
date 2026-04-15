@@ -6,7 +6,7 @@
 <title>{% block title %}ROLLON AR{% endblock %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="/static/css/style.css?v=32e">
+<link rel="stylesheet" href="/static/css/style.css?v=32d">
 </head>
 <body>
 {% if session.get('authenticated') %}
@@ -26,7 +26,7 @@
   </div>
   <div class="nav-right">
     <input type="text" id="global-search" class="global-search" placeholder="Search records...">
-    <span class="nav-role">{{ session.get('role', 'admin')|upper }}</span>
+    <span class="nav-role">{% if session.get('role') == 'admin' %}CAPTAIN{% elif session.get('role') == 'assistant' %}CO-PILOT{% else %}{{ session.get('role', 'admin')|upper }}{% endif %}</span>
     <span class="conn-dot" id="conn-status" title="Connected">●</span>
     <a href="/logout" class="nav-link nav-logout">Logout</a>
   </div>
@@ -43,10 +43,10 @@
     <div id="modal-body" class="modal-body"></div>
   </div>
 </div>
-<script src="/static/js/core.js?v=32e"></script>
-<script src="/static/js/filters.js?v=32e"></script>
-<script src="/static/js/grid-engine.js?v=32e"></script>
-<script src="/static/js/monitor.js?v=32e"></script>
+<script src="/static/js/core.js?v=32d"></script>
+<script src="/static/js/filters.js?v=32d"></script>
+<script src="/static/js/grid-engine.js?v=32d"></script>
+<script src="/static/js/monitor.js?v=32d"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

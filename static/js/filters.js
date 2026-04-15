@@ -120,8 +120,7 @@ function buildFilterPanelV2(containerId,columns,headers,filters,onChange){
         html+=`<div class="filter-pill-dropdown" id="fpd-${i}" style="display:none"></div>`;
         html+=`</div>`;
       } else {
-        html+=`<div style="position:relative;flex:1"><input class="filter-val" data-fidx="${i}" value="${esc(f.val||'').replace(/"/g,'&quot;')}" placeholder="Enter a value..." autocomplete="off">`;
-        html+=`<div class="filter-ac-dd" id="fac-${i}" style="display:none"></div></div>`;
+        html+=`<input class="filter-val" data-fidx="${i}" value="${esc(f.val||'').replace(/"/g,'&quot;')}" placeholder="Enter a value...">`;
       }
     }
     html+=`<span class="filter-remove" onclick="window._fr2(${i})">🗑</span>`;
@@ -136,49 +135,16 @@ function buildFilterPanelV2(containerId,columns,headers,filters,onChange){
   window._filterRebuild=()=>buildFilterPanelV2(containerId,columns,headers,filters,onChange);
 
   // Attach debounced input handlers to text filter inputs (NO panel rebuild)
-  let _fvDeb;let _facDeb;
+  let _fvDeb;
   el.querySelectorAll('input.filter-val[data-fidx]').forEach(inp=>{
     const idx=parseInt(inp.dataset.fidx);
-    const filterCol=filters[idx]?.col||'';
     inp.addEventListener('input',()=>{
       filters[idx].val=inp.value;
       clearTimeout(_fvDeb);
       _fvDeb=setTimeout(()=>onChange(filters),400);
-      // Autocomplete suggestions
-      clearTimeout(_facDeb);
-      _facDeb=setTimeout(()=>{
-        const q=inp.value.trim();
-        const dd=document.getElementById('fac-'+idx);
-        if(!dd||!filterCol)return;
-        if(q.length<1){dd.style.display='none';return}
-        const tbl=window._currentTable||'songs';
-        fetch(`/api/autocomplete/${tbl}/${encodeURIComponent(filterCol)}?q=${encodeURIComponent(q)}&limit=8`).then(r=>r.json()).then(d=>{
-          const vals=d.values||[];
-          if(!vals.length){dd.style.display='none';return}
-          dd.innerHTML=vals.map(v=>`<div class="fac-item" onclick="pickFilterAC(${idx},this)">${esc(v)}</div>`).join('');
-          dd.style.display='block';
-        }).catch(()=>{dd.style.display='none'});
-      },150);
     });
     inp.addEventListener('keydown',e=>{
-      if(e.key==='Enter'){clearTimeout(_fvDeb);clearTimeout(_facDeb);const dd=document.getElementById('fac-'+idx);if(dd)dd.style.display='none';onChange(filters)}
-      if(e.key==='Escape'){const dd=document.getElementById('fac-'+idx);if(dd)dd.style.display='none'}
-    });
-    inp.addEventListener('focus',()=>{
-      // Show suggestions on focus if value exists
-      const q=inp.value.trim();
-      if(q.length>=1&&filterCol){
-        clearTimeout(_facDeb);
-        _facDeb=setTimeout(()=>{
-          const tbl=window._currentTable||'songs';
-          fetch(`/api/autocomplete/${tbl}/${encodeURIComponent(filterCol)}?q=${encodeURIComponent(q)}&limit=8`).then(r=>r.json()).then(d=>{
-            const vals=d.values||[];const dd=document.getElementById('fac-'+idx);
-            if(!dd||!vals.length){if(dd)dd.style.display='none';return}
-            dd.innerHTML=vals.map(v=>`<div class="fac-item" onclick="pickFilterAC(${idx},this)">${esc(v)}</div>`).join('');
-            dd.style.display='block';
-          }).catch(()=>{});
-        },100);
-      }
+      if(e.key==='Enter'){clearTimeout(_fvDeb);onChange(filters)}
     });
   });
 
@@ -366,20 +332,3 @@ function removeFilterVal(idx,val){
   if(window._filterOnChange)window._filterOnChange(filters);
   if(window._filterRebuild)window._filterRebuild();
 }
-
-// ==================== FILTER TEXT AUTOCOMPLETE ====================
-function pickFilterAC(idx,el){
-  const val=el.textContent;
-  const inp=document.querySelector(`input.filter-val[data-fidx="${idx}"]`);
-  if(inp){inp.value=val}
-  const filters=window._currentFilters;
-  if(filters){filters[idx].val=val}
-  const dd=document.getElementById('fac-'+idx);if(dd)dd.style.display='none';
-  if(window._filterOnChange)window._filterOnChange(filters);
-}
-// Close autocomplete dropdowns on outside click
-document.addEventListener('click',e=>{
-  if(!e.target.closest('.filter-val')&&!e.target.closest('.filter-ac-dd')){
-    document.querySelectorAll('.filter-ac-dd').forEach(d=>d.style.display='none');
-  }
-});

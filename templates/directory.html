@@ -76,7 +76,7 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
 
   init(){
     setupSearchAutosuggest('search-input','directory');
-    try{this.views=JSON.parse(localStorage.getItem('rollon_dir_views')||'{}')}catch(e){}
+    this.views=ViewSync.load('directory','rollon_dir_views')
     this.currentView=localStorage.getItem('rollon_dir_current_view')||'All';
     if(!this.views['All'])this.views['All']={filters:[],visibleCols:[],sort:'',dir:'asc'};
     const saved=this.views[this.currentView];
@@ -101,7 +101,7 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
   _autoSave(){
     if(!this.visibleCols.length)return;
     this.views[this.currentView]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir,group:this.group||'',groupDir:this.groupDir||'asc'};
-    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));
+    ViewSync.save('directory','rollon_dir_views',this.views);
     localStorage.setItem('rollon_dir_current_view',this.currentView);
   },
 
@@ -243,20 +243,20 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       if(!v[0]||v[0]===oldName)return;
       this.views[v[0]]=this.views[oldName];delete this.views[oldName];
       if(this.currentView===oldName)this.currentView=v[0];
-      localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Renamed: '+v[0])})},
+      ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('Renamed: '+v[0])})},
 
   duplicateView(name){
     document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
     const newName=name+' copy';
     this.views[newName]=JSON.parse(JSON.stringify(this.views[name]));
-    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Duplicated: '+newName)},
+    ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('Duplicated: '+newName)},
 
   deleteView(name){
     document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
     if(name==='All'){toast('Cannot delete default view','error');return}
     delete this.views[name];
     if(this.currentView===name){this.currentView='All';this.loadView('All')}
-    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Deleted: '+name)},
+    ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('Deleted: '+name)},
 
   loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;
     localStorage.setItem('rollon_dir_current_view',n);
@@ -269,7 +269,7 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
   saveView(){showPromptModal('Save View',[{label:'View name',placeholder:'My view'}],(v)=>{
     if(!v[0])return;const n=v[0];
     this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};
-    this.currentView=n;localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('View saved: '+n)})},
+    this.currentView=n;ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('View saved: '+n)})},
 
   newRecord(){showPromptModal('New Contact',[
     {label:'Name (required)',placeholder:'Full name'},
