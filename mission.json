@@ -310,7 +310,8 @@
         "name": "Authenticator Management",
         "description": "Organization manages information system authenticators by verifying identity, initial content, and administrative procedures.",
         "findings": ["F-001", "F-016"],
-        "status": "PARTIAL"
+        "status": "PASSING",
+        "note": "F-001 passwords and F-016 SMTP defaults both closed in V32i. Credentials loaded from .env/env vars."
       },
       {
         "id": "SC-23",
@@ -325,7 +326,7 @@
         "name": "Information Input Validation",
         "description": "Information system checks the validity of information inputs.",
         "findings": ["F-002", "F-006", "F-007", "F-015", "F-019"],
-        "status": "MOSTLY_PASSING",
+        "status": "PASSING",
         "note": "All SI-10 findings closed: formula injection, splits, dedup, email validation, atomic IDs."
       },
       {
@@ -333,8 +334,8 @@
         "name": "Error Handling",
         "description": "Information system generates error messages that provide information necessary for corrective actions without revealing exploitable information.",
         "findings": ["F-011"],
-        "status": "FAILING",
-        "note": "36 bare except:pass blocks swallow errors silently."
+        "status": "PASSING",
+        "note": "All 36 bare except:pass blocks replaced with specific exceptions and logging in V32i."
       },
       {
         "id": "SC-5",
@@ -349,23 +350,23 @@
         "name": "Transmission Confidentiality and Integrity",
         "description": "System protects confidentiality and integrity of transmitted information.",
         "findings": ["F-016"],
-        "status": "PARTIAL",
-        "note": "SMTP uses STARTTLS. Credential defaults in source."
+        "status": "PASSING",
+        "note": "SMTP uses STARTTLS. Credential defaults removed in V32i, loaded from .env/env vars."
       },
       {
         "id": "AU-3",
         "name": "Content of Audit Records",
         "description": "Audit records contain information about what type of event occurred, when, where, source, outcome.",
         "findings": ["F-011"],
-        "status": "PARTIAL",
-        "note": "Performance monitor logs slow requests. Silent except:pass blocks prevent error auditing."
+        "status": "PASSING",
+        "note": "Performance monitor logs slow requests. All except blocks now log with specific exceptions."
       },
       {
         "id": "CP-9",
         "name": "System Backup",
         "description": "Organization conducts backups of user-level and system-level information.",
         "findings": ["F-005", "F-013"],
-        "status": "PARTIAL",
+        "status": "PASSING",
         "note": "Views sync to Sheets. Edit tokens persisted to file with periodic cleanup."
       }
     ]
@@ -468,19 +469,10 @@
       }
     ],
     "remaining_effort_to_exit": {
-      "must_pass_hours": 6.25,
-      "should_pass_hours": 4,
-      "total_hours": 10.25,
-      "breakdown": {
-        "F-001_passwords": "30min",
-        "F-011_error_handling": "2hrs",
-        "F-012_threading": "1hr",
-        "F-015_atomic_ids": "30min",
-        "F-017_multi_sort": "3hrs",
-        "F-019_email_validation": "15min",
-        "F-018_filter_autosuggest": "2hrs",
-        "airtable_migration": "1hr (blocked on CSV)"
-      }
+      "must_pass_hours": 0,
+      "should_pass_hours": 0,
+      "total_hours": 0,
+      "note": "All 20 findings closed. All exit criteria PASSING."
     }
   },
 
