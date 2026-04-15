@@ -84,18 +84,119 @@ ROLE_PAGES = {
 
 # Simple rate limiter for public endpoints (per IP)
 _submit_times = {}
-def rate_limit_check(ip, max_per_hour=10):
+_submit_times_lock = threading.Lock()
+
+def _get_client_ip():
+    """Get real client IP, respecting X-Forwarded-For behind proxy."""
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr
+
+def rate_limit_check(ip=None, max_per_hour=10):
+    if ip is None:
+        ip = _get_client_ip()
     now = time.time()
-    times = _submit_times.get(ip, [])
-    times = [t for t in times if now - t < 3600]
-    if len(times) >= max_per_hour: return False
-    times.append(now)
-    _submit_times[ip] = times
+    with _submit_times_lock:
+        times = _submit_times.get(ip, [])
+        times = [t for t in times if now - t < 3600]
+        if len(times) >= max_per_hour: return False
+        times.append(now)
+        _submit_times[ip] = times
     return True
 
+def _cleanup_rate_limits():
+    """Remove stale rate limit entries older than 1 hour."""
+    now = time.time()
+    with _submit_times_lock:
+        stale = [ip for ip, times in _submit_times.items()
+                 if not any(now - t < 3600 for t in times)]
+        for ip in stale:
+            del _submit_times[ip]
+
 # Edit tokens for submission corrections (token -> {row_index, data, expires})
+# Persisted to file so tokens survive server restarts
 import secrets
-_edit_tokens = {}
+
+_EDIT_TOKENS_FILE = os.path.join(os.path.dirname(__file__), '.edit_tokens.json')
+_edit_tokens_lock = threading.Lock()
+
+def _load_edit_tokens():
+    """Load edit tokens from file, discarding expired entries."""
+    if not os.path.exists(_EDIT_TOKENS_FILE):
+        return {}
+    try:
+        with open(_EDIT_TOKENS_FILE, 'r') as f:
+            tokens = json.load(f)
+        now = time.time()
+        return {k: v for k, v in tokens.items() if v.get('expires', 0) > now}
+    except (json.JSONDecodeError, IOError) as e:
+        logging.warning(f"Failed to load edit tokens: {e}")
+        return {}
+
+def _save_edit_tokens():
+    """Persist current edit tokens to file (call while holding lock)."""
+    try:
+        with open(_EDIT_TOKENS_FILE, 'w') as f:
+            json.dump(_edit_tokens, f)
+    except IOError as e:
+        logging.warning(f"Failed to save edit tokens: {e}")
+
+_edit_tokens = _load_edit_tokens()
+
+def _cleanup_edit_tokens():
+    """Remove expired edit tokens and save."""
+    now = time.time()
+    with _edit_tokens_lock:
+        expired = [k for k, v in _edit_tokens.items() if v.get('expires', 0) <= now]
+        for k in expired:
+            del _edit_tokens[k]
+        if expired:
+            _save_edit_tokens()
+
+# Batched playlist view counter (flush to Sheets periodically, not on every page load)
+_playlist_views = {}  # pid -> pending_count
+_playlist_views_lock = threading.Lock()
+
+def _flush_playlist_views():
+    """Flush buffered playlist view counts to Google Sheets."""
+    with _playlist_views_lock:
+        pending = dict(_playlist_views)
+        _playlist_views.clear()
+    if not pending:
+        return
+    try:
+        data = sheets.get_all_rows('Playlists')
+        if not data or len(data) < 2:
+            return
+        headers = data[0]; rows = data[1:]
+        id_col = find_col(headers, 'id')
+        views_col = find_col(headers, 'views')
+        if id_col is None or views_col is None:
+            return
+        for i, row in enumerate(rows):
+            pid = row[id_col] if id_col < len(row) else ''
+            if pid in pending:
+                current = int(row[views_col] if views_col < len(row) and row[views_col] else '0')
+                sheets.update_cell('Playlists', i + 2, views_col + 1, str(current + pending[pid]))
+        sheets._invalidate_cache('Playlists')
+    except Exception as e:
+        logging.warning(f"Failed to flush playlist views: {e}")
+
+# Periodic cleanup timer (runs every 60s)
+def _periodic_cleanup():
+    """Run cleanup tasks periodically."""
+    while True:
+        time.sleep(60)
+        try:
+            _cleanup_rate_limits()
+            _cleanup_edit_tokens()
+            _flush_playlist_views()
+        except Exception as e:
+            logging.warning(f"Periodic cleanup error: {e}")
+
+_cleanup_thread = threading.Thread(target=_periodic_cleanup, daemon=True)
+_cleanup_thread.start()
 
 # SMTP config for confirmation emails
 SMTP_HOST = os.environ.get('ROLLON_SMTP_HOST', 'smtp.gmail.com')
@@ -1823,7 +1924,7 @@ def submit_form():
 
 @app.route('/api/submit-song', methods=['POST'])
 def api_submit_song():
-    if not rate_limit_check(request.remote_addr, max_per_hour=10):
+    if not rate_limit_check(max_per_hour=10):
         return jsonify({'error': 'Too many submissions. Please try again later.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
@@ -1924,16 +2025,18 @@ def api_submit_song():
         try: build_name_cache()
         except Exception as e: logging.warning(f"Name cache rebuild after submit: {e}")
         logging.info(f"Song submitted: {title} by {submitter} ({email})")
-        # Generate edit token (24h expiry)
+        # Generate edit token (24h expiry), persisted to file
         token = secrets.token_urlsafe(32)
-        _edit_tokens[token] = {
-            'row_index': sheets.get_row_count('Songs') + 1,  # last row
-            'data': d,
-            'title': title,
-            'email': email,
-            'submitter': submitter,
-            'expires': time.time() + 86400  # 24 hours
-        }
+        with _edit_tokens_lock:
+            _edit_tokens[token] = {
+                'row_index': sheets.get_row_count('Songs') + 1,  # last row
+                'data': d,
+                'title': title,
+                'email': email,
+                'submitter': submitter,
+                'expires': time.time() + 86400  # 24 hours
+            }
+            _save_edit_tokens()
         # Send confirmation email (non-blocking, best effort)
         try:
             if SMTP_USER and SMTP_PASS:
@@ -1999,17 +2102,19 @@ def _send_confirmation_email(to_email, name, title, token, data):
 @app.route('/api/submit-edit', methods=['POST'])
 def api_submit_edit():
     """Update a previously submitted song using edit token."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=10):
+    if not rate_limit_check(max_per_hour=10):
         return jsonify({'error': 'Too many requests.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
     token = d.get('edit_token', '').strip()
-    if not token or token not in _edit_tokens:
-        return jsonify({'error': 'Invalid or expired edit link.'}), 400
-    tok = _edit_tokens[token]
-    if time.time() > tok['expires']:
-        del _edit_tokens[token]
-        return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
+    with _edit_tokens_lock:
+        if not token or token not in _edit_tokens:
+            return jsonify({'error': 'Invalid or expired edit link.'}), 400
+        tok = _edit_tokens[token]
+        if time.time() > tok['expires']:
+            del _edit_tokens[token]
+            _save_edit_tokens()
+            return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
     title = d.get('title', '').strip()
     if not title: return jsonify({'error': 'Title is required'}), 400
     email = d.get('submitter_email', '').strip()
@@ -2061,7 +2166,9 @@ def api_submit_edit():
             sheets.update_cell('Songs', ri, lm_col + 1, datetime.now().strftime('%Y-%m-%d %H:%M'))
         sheets._invalidate_cache('Songs')
         # Keep token valid for remaining time (they might need another edit)
-        tok['data'] = d
+        with _edit_tokens_lock:
+            tok['data'] = d
+            _save_edit_tokens()
         logging.info(f"Song edited via token: {title} by {submitter}")
         return jsonify({'success': True, 'title': title, 'edited': True})
     except Exception as e:
@@ -2072,16 +2179,18 @@ def api_submit_edit():
 @app.route('/api/submit-load/<token>')
 def api_submit_load(token):
     """Load submission data for editing."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=30):
+    if not rate_limit_check(max_per_hour=30):
         return jsonify({'error': 'Too many requests.'}), 429
-    if token not in _edit_tokens:
-        return jsonify({'error': 'Invalid or expired edit link.'}), 400
-    tok = _edit_tokens[token]
-    if time.time() > tok['expires']:
-        del _edit_tokens[token]
-        return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
-    d = tok['data']
-    remaining = int((tok['expires'] - time.time()) / 60)
+    with _edit_tokens_lock:
+        if token not in _edit_tokens:
+            return jsonify({'error': 'Invalid or expired edit link.'}), 400
+        tok = _edit_tokens[token]
+        if time.time() > tok['expires']:
+            del _edit_tokens[token]
+            _save_edit_tokens()
+            return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
+        d = tok['data']
+        remaining = int((tok['expires'] - time.time()) / 60)
     return jsonify({'success': True, 'data': d, 'title': tok['title'], 'minutes_remaining': remaining})
 
 def format_lyrics(text):
@@ -2174,7 +2283,7 @@ def format_lyrics(text):
 @app.route('/api/public/search-names')
 def api_public_search_names():
     """Public endpoint for submission form. Returns names only, no sensitive data."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=100):
+    if not rate_limit_check(max_per_hour=100):
         return jsonify({'names': []}), 429
     q = request.args.get('q', '').strip()
     if len(q) < 1: return jsonify({'names': []})
@@ -2351,11 +2460,14 @@ def public_playlist(pid):
                 rec = {}
                 for j, h in enumerate(headers):
                     rec[h] = row[j] if j < len(row) else ''
-                # Increment views
+                # Increment views (batched, flushed every 60s by cleanup thread)
                 views_col = find_col(headers, 'views')
+                current_views = int(rec.get('Views', '0') or '0')
+                pending = 0
                 if views_col is not None:
-                    current_views = int(rec.get('Views', '0') or '0')
-                    sheets.update_cell('Playlists', i + 2, views_col + 1, str(current_views + 1))
+                    with _playlist_views_lock:
+                        _playlist_views[pid] = _playlist_views.get(pid, 0) + 1
+                        pending = _playlist_views.get(pid, 0)
                 # Parse song data
                 songs = []
                 try: songs = json.loads(rec.get('Song Data', '[]'))
@@ -2364,7 +2476,7 @@ def public_playlist(pid):
                     playlist_name=rec.get('Name', ''),
                     playlist_desc=rec.get('Description', ''),
                     songs=songs,
-                    views=current_views + 1 if views_col else 0,
+                    views=(current_views + pending) if views_col else 0,
                     created=rec.get('Created', ''),
                     pid=pid)
         return "Playlist not found", 404

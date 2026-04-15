@@ -6,4 +6,5 @@ __pycache__/
 rollon.log
 .DS_Store
 .env
+.edit_tokens.json
 migrate_attachments.py

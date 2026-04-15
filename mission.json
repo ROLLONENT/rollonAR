@@ -190,28 +190,30 @@
       "id": "F-013",
       "title": "Edit tokens stored in memory only",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "CLOSED_V32h",
       "introduced": "V32e",
+      "closed": "V32h",
       "description": "_edit_tokens dict lost on server restart. No cleanup of expired tokens.",
       "file": "app.py",
       "line": 70,
       "nist": ["SC-23 Session Authenticity", "CP-9 System Backup"],
       "soc2": "CC6.1 Logical and Physical Access Controls",
       "effort": "1hr",
-      "fix": "Store tokens in a Sheets tab or file-based store. Add periodic cleanup of expired entries."
+      "fix_applied": "Edit tokens persisted to .edit_tokens.json with thread-safe locking. Periodic cleanup thread removes expired tokens every 60s. File reloaded on server start, discarding expired entries."
     },
     {
       "id": "F-014",
       "title": "Rate limiter uses in-memory dict keyed by IP",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "CLOSED_V32h",
       "introduced": "V32d",
+      "closed": "V32h",
       "description": "Behind proxy, request.remote_addr is always proxy IP. _submit_times dict never cleaned.",
       "file": "app.py",
       "nist": ["SC-5 Denial of Service Protection"],
       "soc2": "CC6.1 Logical and Physical Access Controls",
       "effort": "30min",
-      "fix": "Use X-Forwarded-For header. Add periodic cleanup of stale entries."
+      "fix_applied": "_get_client_ip() reads X-Forwarded-For header (first hop) with remote_addr fallback. Thread-safe locking on _submit_times. Periodic cleanup thread purges stale entries every 60s."
     },
     {
       "id": "F-015",
@@ -260,14 +262,15 @@
       "id": "F-018",
       "title": "Filter text inputs don't auto-suggest values",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "CLOSED_V32h",
       "introduced": "V32d",
+      "closed": "V32h",
       "description": "Autocomplete endpoint exists but not wired to filter inputs.",
       "file": "static/js/filters.js",
       "nist": [],
       "soc2": null,
       "effort": "2hrs",
-      "fix": "Wire /api/autocomplete/<table>/<field> to filter value inputs with typeahead dropdown."
+      "fix_applied": "Filter text inputs wired to /api/autocomplete/<table>/<field> with debounced typeahead dropdown (.fac-item). Shows suggestions on input and focus. Keyboard support (Enter to apply, Escape to dismiss). Click-outside dismissal. CSS styled in style.css."
     },
     {
       "id": "F-019",
@@ -287,14 +290,15 @@
       "id": "F-020",
       "title": "Playlist view counter burns API quota",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "CLOSED_V32h",
       "introduced": "V32e",
+      "closed": "V32h",
       "description": "Public playlist endpoint calls update_cell() on every page load. Invalidates cache.",
       "file": "app.py",
       "nist": ["SC-5 Denial of Service Protection"],
       "soc2": "CC7.2 System Operations",
       "effort": "1hr",
-      "fix": "Batch view counts: increment in memory, flush to sheet every 60s or on threshold."
+      "fix_applied": "View counts buffered in _playlist_views dict (thread-safe). Flushed to Sheets every 60s by periodic cleanup thread. Public page shows current + pending count for accurate display without per-request API call."
     }
   ],
 
@@ -313,8 +317,8 @@
         "name": "Session Authenticity",
         "description": "Information system protects the authenticity of communications sessions.",
         "findings": ["F-003", "F-013"],
-        "status": "PARTIAL",
-        "note": "CSRF fixed in V32h. Edit tokens still memory-only."
+        "status": "PASSING",
+        "note": "CSRF fixed in V32h. Edit tokens persisted to file with cleanup in V32h."
       },
       {
         "id": "SI-10",
@@ -322,7 +326,7 @@
         "description": "Information system checks the validity of information inputs.",
         "findings": ["F-002", "F-006", "F-007", "F-015", "F-019"],
         "status": "MOSTLY_PASSING",
-        "note": "Formula injection, splits, dedup all fixed. Email validation and atomic IDs still open."
+        "note": "All SI-10 findings closed: formula injection, splits, dedup, email validation, atomic IDs."
       },
       {
         "id": "SI-11",
@@ -337,8 +341,8 @@
         "name": "Denial of Service Protection",
         "description": "System protects against or limits effects of denial of service attacks.",
         "findings": ["F-004", "F-008", "F-012", "F-014", "F-020"],
-        "status": "PARTIAL",
-        "note": "429 retry and batch updates fixed. Threading, rate limiter IP, playlist counter still open."
+        "status": "PASSING",
+        "note": "All SC-5 findings closed: 429 retry, batch updates, threading, rate limiter X-Forwarded-For, playlist view batching."
       },
       {
         "id": "SC-8",
@@ -362,7 +366,7 @@
         "description": "Organization conducts backups of user-level and system-level information.",
         "findings": ["F-005", "F-013"],
         "status": "PARTIAL",
-        "note": "Views now sync to Sheets. Edit tokens still volatile."
+        "note": "Views sync to Sheets. Edit tokens persisted to file with periodic cleanup."
       }
     ]
   },
@@ -375,20 +379,20 @@
         "name": "Logical and Physical Access Controls",
         "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets.",
         "findings": ["F-001", "F-002", "F-003", "F-005", "F-006", "F-007", "F-013", "F-014", "F-015", "F-016", "F-019"],
-        "status": "PARTIAL",
-        "closed_count": 5,
-        "open_count": 6,
-        "note": "Major items (CSRF, formula injection, splits, dedup, views persistence) closed. Password hardcoding, email validation, rate limiter remain."
+        "status": "PASSING",
+        "closed_count": 11,
+        "open_count": 0,
+        "note": "All CC6.1 findings closed: CSRF, formula injection, splits, dedup, views persistence, passwords, email validation, rate limiter, edit tokens, atomic IDs."
       },
       {
         "id": "CC7.2",
         "name": "System Operations - Monitoring",
         "description": "The entity monitors system components and evaluates detected anomalies for deviations.",
         "findings": ["F-004", "F-008", "F-011", "F-012", "F-020"],
-        "status": "PARTIAL",
-        "closed_count": 2,
-        "open_count": 3,
-        "note": "API retry and batch updates fixed. Error swallowing, threading, playlist counter remain."
+        "status": "PASSING",
+        "closed_count": 5,
+        "open_count": 0,
+        "note": "All CC7.2 findings closed: API retry, batch updates, error handling, threading, playlist view batching."
       }
     ]
   },
@@ -459,9 +463,8 @@
       {
         "id": "EC-10",
         "rule": "Filter auto-suggest wired to autocomplete endpoint",
-        "status": "FAILING",
-        "blocker": "F-018",
-        "effort": "2hrs"
+        "status": "PASSING",
+        "note": "F-018 closed. Autocomplete wired to filter text inputs with typeahead dropdown."
       }
     ],
     "remaining_effort_to_exit": {
