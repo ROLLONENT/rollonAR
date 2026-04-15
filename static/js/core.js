@@ -336,7 +336,13 @@ function renderContactPill(v){return `<span class="pill" onclick="event.stopProp
 
 function renderUrls(v){const urls=v.split(/[,\s]+/).filter(u=>u.startsWith('http'));
   if(!urls.length)return `<span class="cell-text">${esc(v)}</span>`;
-  return urls.map(u=>`<span class="cell-url"><a href="${escA(u)}" target="_blank" onclick="event.stopPropagation()">${esc(u.replace(/https?:\/\/(www\.)?/,'').substring(0,30))}</a></span>`).join(' ')}
+  return urls.map(u=>{
+    const short=u.replace(/https?:\/\/(www\.)?/,'').substring(0,30);
+    const isDropbox=u.includes('dropbox.com');
+    const isDisco=u.includes('disco.ac');
+    const icon=isDropbox?'\u25B6 ':isDisco?'\uD83C\uDFB5 ':'';
+    return `<span class="cell-url"><a href="${escA(u)}" target="_blank" onclick="event.stopPropagation()">${icon}${esc(short)}</a></span>`;
+  }).join(' ')}
 
 // ---- DETAIL MODAL ----
 function renderDetailModal(record,headers,table){
@@ -532,10 +538,17 @@ function addChecklistItem(btn){
   btn.closest('.checklist-item').replaceWith(wrap);
   const inp=wrap.querySelector('.inline-edit');inp.focus();
   inp.addEventListener('blur',()=>{
-    const text=inp.value.trim();if(!text){refreshDetail(ri,table);return}
-    const items=cv?cv.split('\n').filter(x=>x.trim()):[];
+    const text=inp.value.trim();
+    if(!text){wrap.remove();dv.insertAdjacentHTML('beforeend','<div class="checklist-item" style="opacity:.6"><span class="pill pill-add" onclick="addChecklistItem(this)" style="font-size:12px;padding:2px 10px">+ Add item</span></div>');return}
+    // Build new value from current DOM items + new item
+    const items=[];
+    dv.querySelectorAll('.checklist-item').forEach(el=>{
+      const cbx=el.querySelector('input[type="checkbox"]');
+      const span=el.querySelector('span[onclick*="editChecklistItem"]');
+      if(cbx&&span) items.push((cbx.checked?'[x] ':'[ ] ')+span.textContent);
+    });
     items.push('[ ] '+text);
-    saveEdit(dv,field,ri,table,items.join('\n'));
+    saveEdit(dv,field,ri,table,items.join('\n'),false);
   });
   inp.addEventListener('keydown',e=>{
     if(e.key==='Enter'){e.preventDefault();inp.blur()}
@@ -561,7 +574,7 @@ function toggleChecklist(cb,idx){
       items.push((cbx.checked?'[x] ':'[ ] ')+span.textContent);
     }
   });
-  if(items.length) saveEdit(dv,field,ri,table,items.join('\n'));
+  if(items.length) saveEdit(dv,field,ri,table,items.join('\n'),true);
 }
 
 function editChecklistItem(span,idx){
@@ -781,14 +794,14 @@ function startEdit(el){
   });
 }
 
-function saveEdit(el,field,ri,table,value){
+function saveEdit(el,field,ri,table,value,skipRefresh){
   const ep=table==='songs'?'/api/songs/update':'/api/directory/update';
   fetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({field,row_index:ri,value})
   }).then(r=>r.json()).then(d=>{
     if(d.success){toast('Saved');
       if(d.automations?.length)d.automations.forEach(a=>toast(a));
-      refreshDetail(ri,table,field);
+      if(!skipRefresh)refreshDetail(ri,table,field);
     } else toast(d.error||'Save failed','error');
   }).catch(()=>toast('Network error','error'));
 }
@@ -891,7 +904,14 @@ function showTypeahead(container,field,ri,table,mode){
       });
     }
   },30)});
-  inp.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();wrap.remove()}});
+  inp.addEventListener('keydown',e=>{
+    const items=dd.querySelectorAll('.typeahead-item');
+    let ai=[...items].findIndex(x=>x.classList.contains('ta-active'));
+    if(e.key==='ArrowDown'){e.preventDefault();items.forEach(x=>x.classList.remove('ta-active'));ai=Math.min(ai+1,items.length-1);items[ai]?.classList.add('ta-active');items[ai]?.scrollIntoView({block:'nearest'})}
+    else if(e.key==='ArrowUp'){e.preventDefault();items.forEach(x=>x.classList.remove('ta-active'));ai=Math.max(ai-1,0);items[ai]?.classList.add('ta-active');items[ai]?.scrollIntoView({block:'nearest'})}
+    else if(e.key==='Enter'){e.preventDefault();const active=dd.querySelector('.ta-active');if(active){active.click()}else if(inp.value.trim()){addPill(field,ri,table,inp.value.trim());wrap.remove()}}
+    else if(e.key==='Escape'){e.stopPropagation();wrap.remove()}
+  });
 }
 
 function addPill(field,ri,table,val){
@@ -2388,6 +2408,89 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='f'){e.preventDefault();const si=document.getElementById('search-input');if(si)si.focus()}
   if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();const p=typeof S!=='undefined'?S:(typeof D!=='undefined'?D:null);if(p&&p.saveView)p.saveView();else toast('View auto-saved')}
 });
+
+// ---- DUPLICATE FINDER ----
+function openDuplicateFinder(){
+  const table=window._currentTable==='songs'?'Songs':'Personnel';
+  const defaultFields=table==='Songs'?['Title','Songwriter Credits']:['Name','Email'];
+  const allCols=(table==='Songs'?(typeof S!=='undefined'?S.allCols:[]):(typeof D!=='undefined'?D.allCols:[]));
+
+  let html='<div style="padding:16px">';
+  html+='<div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">';
+  html+='<select id="dupe-table" onchange="dupeSwitchTable()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-raised);color:var(--text);font-size:12px">';
+  html+='<option value="Songs"'+(table==='Songs'?' selected':'')+'>Songs</option>';
+  html+='<option value="Personnel"'+(table==='Personnel'?' selected':'')+'>Personnel</option></select>';
+  html+='<select id="dupe-mode" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-raised);color:var(--text);font-size:12px">';
+  html+='<option value="exact">Exact Match</option><option value="similar">Similar</option><option value="fuzzy">Fuzzy</option></select>';
+  html+='<button class="btn btn-accent" onclick="runDupeScan()">Scan</button></div>';
+
+  // Field checkboxes
+  html+='<div id="dupe-fields" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">';
+  const cols=allCols.length?allCols:defaultFields;
+  cols.forEach(c=>{
+    const checked=defaultFields.some(d=>d.toLowerCase()===c.toLowerCase());
+    html+='<label style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px"><input type="checkbox" value="'+escA(c)+'"'+(checked?' checked':'')+'>'+esc(c)+'</label>';
+  });
+  html+='</div>';
+  html+='<div id="dupe-results" style="color:var(--text-ghost);font-size:12px">Select fields and click Scan to find duplicates.</div>';
+  html+='</div>';
+  openModal('Duplicate Finder',html);
+}
+
+function dupeSwitchTable(){
+  const t=document.getElementById('dupe-table').value;
+  const defaults=t==='Songs'?['Title','Songwriter Credits']:['Name','Email'];
+  document.querySelectorAll('#dupe-fields input').forEach(cb=>{
+    cb.checked=defaults.some(d=>d.toLowerCase()===cb.value.toLowerCase());
+  });
+}
+
+function runDupeScan(){
+  const table=document.getElementById('dupe-table').value;
+  const mode=document.getElementById('dupe-mode').value;
+  const fields=[];
+  document.querySelectorAll('#dupe-fields input:checked').forEach(cb=>fields.push(cb.value));
+  if(!fields.length){toast('Select at least one field','error');return}
+  const el=document.getElementById('dupe-results');
+  el.innerHTML='<div class="spinner"></div> Scanning...';
+  fetch('/api/duplicates',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table,fields,mode})
+  }).then(r=>r.json()).then(d=>{
+    if(d.error){el.innerHTML='<span style="color:var(--danger)">'+esc(d.error)+'</span>';return}
+    if(!d.groups?.length){el.innerHTML='<div style="color:var(--success);font-weight:600">No duplicates found!</div>';return}
+    let html='<div style="font-weight:600;margin-bottom:12px;color:var(--accent)">'+d.total_groups+' duplicate groups ('+d.total_dupes+' records)</div>';
+    d.groups.slice(0,50).forEach(g=>{
+      html+='<div style="border:1px solid var(--border);border-radius:var(--r-md);margin-bottom:8px;overflow:hidden">';
+      html+='<div style="padding:8px 12px;background:var(--bg-hover);font-weight:600;font-size:12px;display:flex;justify-content:space-between;cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">';
+      html+='<span>'+g.count+' RECORDS: '+esc(g.label)+'</span><span style="color:var(--text-ghost)">\u25BC</span></div>';
+      html+='<div style="display:none;padding:8px">';
+      g.records.forEach((r,i)=>{
+        const ri=r._row_index;
+        html+='<div style="padding:6px;border-bottom:1px solid var(--border-subtle);font-size:11px;display:flex;justify-content:space-between;align-items:center">';
+        html+='<span style="cursor:pointer;color:var(--accent)" onclick="closeModal();openRecord('+ri+',\''+(table==='Songs'?'songs':'directory')+'\')">Row '+ri+': ';
+        // Show key fields
+        const name=r.Title||r.Name||'';
+        const email=r.Email||'';
+        html+=esc(name);if(email)html+=' ('+esc(email)+')';
+        html+='</span>';
+        if(i>0)html+='<button class="btn btn-sm" style="color:var(--danger);font-size:10px" onclick="deleteDupeRow('+ri+',\''+table+'\')">Delete</button>';
+        html+='</div>';
+      });
+      html+='</div></div>';
+    });
+    el.innerHTML=html;
+  });
+}
+
+function deleteDupeRow(ri,table){
+  if(!confirm('Delete row '+ri+'? This cannot be undone.'))return;
+  fetch('/api/merge',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table,keep_row:ri,delete_rows:[ri],merged_values:{}})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success){toast('Row '+ri+' deleted');runDupeScan()}
+    else toast(d.error||'Failed','error');
+  });
+}
 
 // Session timeout warning (6 hours)
 const _sessionStart=Date.now();

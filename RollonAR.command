@@ -1,13 +1,34 @@
 #!/bin/bash
 clear
+
+VERSION="V32i"
+
 echo ""
 echo "  ╔═══════════════════════════════════════╗"
-echo "  ║  ROLLON AR v32d — A&R Operating System ║"
+echo "  ║  ROLLON AR $VERSION — A&R Operating System ║"
 echo "  ║  http://localhost:5001                ║"
 echo "  ╚═══════════════════════════════════════╝"
 echo ""
 
 cd "$(dirname "$0")"
+
+# Kill any existing ROLLON AR processes (python3 app.py or gunicorn on port 5001)
+echo "  Checking for existing processes..."
+EXISTING=$(lsof -ti :5001 2>/dev/null)
+if [ -n "$EXISTING" ]; then
+    echo "  Killing existing process on port 5001 (PID: $EXISTING)"
+    kill $EXISTING 2>/dev/null
+    sleep 1
+    # Force kill if still running
+    STILL=$(lsof -ti :5001 2>/dev/null)
+    if [ -n "$STILL" ]; then
+        kill -9 $STILL 2>/dev/null
+        sleep 0.5
+    fi
+    echo "  Previous instance stopped."
+else
+    echo "  No existing process found."
+fi
 
 # Use Python 3.12 to avoid 3.14 SSL/malloc crash
 PYTHON=""
@@ -26,10 +47,11 @@ fi
 
 PY_VERSION=$($PYTHON --version 2>&1)
 echo "  Python: $PY_VERSION"
+echo "  Version: $VERSION"
 
 # Warn if using 3.14
 if echo "$PY_VERSION" | grep -q "3.14"; then
-    echo "  ⚠ Python 3.14 detected — known SSL crash issues on macOS ARM64"
+    echo "  WARNING: Python 3.14 detected — known SSL crash issues on macOS ARM64"
     echo "  Recommended: brew install python@3.12 && brew link python@3.12"
     echo ""
 fi
@@ -55,5 +77,10 @@ if [ ! -f "$CREDS" ] && [ -f "$FALLBACK/$CREDS" ]; then
     echo "  Copied credentials from ROLLON AR folder"
 fi
 
+# Ensure gunicorn is installed
+$PYTHON -c "import gunicorn" 2>/dev/null || $PYTHON -m pip install gunicorn -q
+
+echo ""
+echo "  Starting ROLLON AR $VERSION..."
 echo ""
 $PYTHON app.py

@@ -2499,6 +2499,135 @@ def api_templates_delete():
 
 
 # ==================== SETTINGS ====================
+# ==================== DUPLICATE FINDER ====================
+@app.route('/api/duplicates', methods=['POST'])
+@login_required
+def api_duplicates():
+    """Find duplicate records. POST body: {table, fields: [field_names], mode: exact|similar|fuzzy}"""
+    d = request.json or {}
+    table_name = d.get('table', 'Songs')
+    field_names = d.get('fields', [])
+    mode = d.get('mode', 'exact')  # exact, similar, fuzzy
+
+    sheet_map = {'Songs': 'Songs', 'Personnel': 'Personnel', 'Directory': 'Personnel'}
+    sheet = sheet_map.get(table_name, table_name)
+
+    try:
+        data = sheets.get_all_rows(sheet)
+        if not data or len(data) < 2:
+            return jsonify({'groups': [], 'total_dupes': 0})
+        headers = data[0]; rows = data[1:]
+
+        # Resolve field columns
+        field_cols = []
+        for fn in field_names:
+            col = find_col(headers, fn)
+            if col is not None:
+                field_cols.append(col)
+        if not field_cols:
+            return jsonify({'error': 'No matching fields found'}), 400
+
+        def normalize(s):
+            s = s.lower().strip()
+            if mode == 'fuzzy':
+                # Remove common words, punctuation
+                import string
+                s = s.translate(str.maketrans('', '', string.punctuation))
+                s = ' '.join(s.split())  # collapse whitespace
+            return s
+
+        def get_key(row):
+            parts = []
+            for ci in field_cols:
+                val = str(row[ci]).strip() if ci < len(row) else ''
+                parts.append(normalize(val))
+            return '||'.join(parts)
+
+        # Group by key
+        groups = {}
+        for ri, row in enumerate(rows, start=2):
+            key = get_key(row)
+            if not key or key == '||'.join(['' for _ in field_cols]):
+                continue
+            if key not in groups:
+                groups[key] = []
+            # Build record summary
+            name_col = find_col(headers, 'title', 'name')
+            rec = {'_row_index': ri}
+            for j, h in enumerate(headers):
+                rec[cleanH(h)] = row[j] if j < len(row) else ''
+            groups[key].append(rec)
+
+        # Filter to only groups with 2+ records
+        dupe_groups = []
+        for key, recs in groups.items():
+            if len(recs) >= 2:
+                # Use first record's name as group label
+                label = recs[0].get('Title', '') or recs[0].get('Name', '') or key
+                dupe_groups.append({
+                    'label': label,
+                    'count': len(recs),
+                    'records': recs,
+                    'key': key
+                })
+
+        dupe_groups.sort(key=lambda g: -g['count'])
+        total = sum(g['count'] for g in dupe_groups)
+
+        return jsonify({
+            'groups': dupe_groups[:100],  # Cap at 100 groups
+            'total_groups': len(dupe_groups),
+            'total_dupes': total,
+            'fields_checked': field_names
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/merge', methods=['POST'])
+@login_required
+def api_merge():
+    """Merge duplicate records. POST body: {table, keep_row: int, delete_rows: [int], merged_values: {field: value}}"""
+    d = request.json or {}
+    table_name = d.get('table', 'Songs')
+    keep_row = d.get('keep_row')
+    delete_rows = d.get('delete_rows', [])
+    merged_values = d.get('merged_values', {})
+
+    sheet_map = {'Songs': 'Songs', 'Personnel': 'Personnel', 'Directory': 'Personnel'}
+    sheet = sheet_map.get(table_name, table_name)
+
+    try:
+        headers = sheets.get_headers(sheet)
+        # Update kept record with merged values
+        for field_name, value in merged_values.items():
+            col = find_col(headers, field_name)
+            if col is not None:
+                sheets.update_cell(sheet, keep_row, col + 1, value)
+
+        # Delete duplicate rows (from bottom up to preserve indices)
+        # Get sheet ID from metadata
+        meta = sheets.service.spreadsheets().get(spreadsheetId=sheets.spreadsheet_id).execute()
+        sheet_id = 0
+        for s in meta.get('sheets', []):
+            if s['properties']['title'] == sheet:
+                sheet_id = s['properties']['sheetId']; break
+        for ri in sorted(delete_rows, reverse=True):
+            sheets.service.spreadsheets().batchUpdate(
+                spreadsheetId=sheets.spreadsheet_id,
+                body={'requests': [{'deleteDimension': {'range': {
+                    'sheetId': sheet_id,
+                    'dimension': 'ROWS',
+                    'startIndex': ri - 1,
+                    'endIndex': ri
+                }}}]}
+            ).execute()
+
+        sheets._invalidate_cache(sheet)
+        return jsonify({'success': True, 'kept': keep_row, 'deleted': len(delete_rows)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/settings')
 @login_required
 def settings(): return render_template('settings.html')
