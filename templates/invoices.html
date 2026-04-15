@@ -123,14 +123,17 @@ const I={
 
   newInvoice(){
     const today=new Date().toISOString().split('T')[0];
-    showPromptModal('New Invoice',[
-      {label:'Entity',type:'select',options:['ROLLON ENT','RESTLESS YOUTH'],value:'ROLLON ENT'},
-      {label:'Client (search Personnel)',placeholder:'Type to search...'},
-      {label:'Description',placeholder:'e.g. April 2026 Consultancy Fee'},
-      {label:'Amount',placeholder:'e.g. 5000.00'},
-      {label:'Currency',type:'select',options:['USD','GBP','EUR','AUD','CAD'],value:'USD'},
-      {label:'Category',type:'select',options:['Management','A&R','Tour Management','Commission','Sync','Other']},
-    ],(v)=>{
+    // Fetch categories dynamically from actual invoice data
+    fetch('/api/autocomplete/invoices/Category?limit=50').then(r=>r.json()).then(catData=>{
+      const cats=(catData.values&&catData.values.length)?catData.values:['Management','A&R','Tour Management','Commission','Sync','Other'];
+      showPromptModal('New Invoice',[
+        {label:'Entity',type:'select',options:['ROLLON ENT','RESTLESS YOUTH'],value:'ROLLON ENT'},
+        {label:'Client (search Personnel)',placeholder:'Type to search...'},
+        {label:'Description',placeholder:'e.g. April 2026 Consultancy Fee'},
+        {label:'Amount',placeholder:'e.g. 5000.00'},
+        {label:'Currency',type:'select',options:['USD','GBP','EUR','AUD','CAD'],value:'USD'},
+        {label:'Category',type:'select',options:cats},
+      ],(v)=>{
       if(!v[1]||!v[3]){toast('Client and Amount required','error');return}
       const entity=v[0]||'ROLLON ENT';
       const prefix=entity==='RESTLESS YOUTH'?'RYE':'ROL';
@@ -143,6 +146,7 @@ const I={
       }).then(r=>r.json()).then(d=>{
         if(d.success){toast('Invoice created'+(d.invoice_no?': '+d.invoice_no:''));this.load()}
         else toast(d.error||'Failed','error')})})
+    });
   },
 
   renderViews(){const el=document.getElementById('inv-views');let html='';

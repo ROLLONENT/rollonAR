@@ -205,24 +205,9 @@ function toggleFilterPillDropdown(filterIdx,colName,table){
   const dd=document.getElementById('fpd-'+filterIdx);
   if(!dd)return;
   if(dd.style.display==='block'){dd.style.display='none';return}
-  // Fetch available values for this column
-  const ep=table==='songs'?'/api/songs/tags':'/api/directory/tags';
-  fetch(ep).then(r=>r.json()).then(data=>{
-    // Get values based on column name
-    let options=[];
-    const cn=colName.toLowerCase();
-    if(cn==='tags'||cn==='tag')options=data.tags||[];
-    else if(cn==='field')options=['Creative','MGMT','Record A&R','Publishing A&R','Agent','Artist','Music Supervisor','Publicist','Sync'];
-    else if(cn==='audio status')options=data.statuses||[];
-    else if(cn==='project')options=data.projects||[];
-    else {
-      // Fallback: fetch unique values from autocomplete
-      fetch(`/api/autocomplete/${table}/${encodeURIComponent(colName)}?limit=50`).then(r=>r.json()).then(d2=>{
-        renderPillDropdown(dd,filterIdx,d2.values||[]);
-      });
-      return;
-    }
-    renderPillDropdown(dd,filterIdx,options);
+  // Always fetch unique values dynamically from autocomplete API — never hardcode
+  fetch(`/api/autocomplete/${encodeURIComponent(table)}/${encodeURIComponent(colName)}?limit=200`).then(r=>r.json()).then(d=>{
+    renderPillDropdown(dd,filterIdx,d.values||[]);
   });
 }
 

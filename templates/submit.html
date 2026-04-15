@@ -207,12 +207,26 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 </div>
 <script>
 const _np=[];const _pills={};
-const _genres=['Pop','Dance / Electronic','R&B / Soul','Hip-Hop / Rap','Singer-Songwriter','Indie','Rock','Country','K-Pop','Latin','Alt-Pop','Bedroom Pop','Folk','Jazz','Classical','Reggaeton','Afrobeats','Other'];
-const _statuses=['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];
+// Loaded dynamically from API — never hardcoded
+let _genres=[];
+let _statuses=[];
 const _params=new URLSearchParams(location.search);
 let _splitsConfirmed=false;
 let _editToken=null;
 let _lastSubmitData=null;
+
+// Load genre and status options dynamically from sheet data
+(function loadDynamicOptions(){
+  fetch('/api/public/autocomplete/songs/Genre').then(r=>r.json()).then(d=>{
+    _genres=d.values||[];
+    if(!_genres.length)_genres=['Pop','R&B / Soul','Hip-Hop / Rap','Singer-Songwriter','Indie','Rock','Country','Other'];
+  }).catch(()=>{_genres=['Pop','R&B / Soul','Hip-Hop / Rap','Singer-Songwriter','Indie','Rock','Country','Other']});
+  fetch('/api/public/autocomplete/songs/Audio Status').then(r=>r.json()).then(d=>{
+    _statuses=d.values||[];
+    if(!_statuses.length)_statuses=['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];
+    renderStatusPills();
+  }).catch(()=>{_statuses=['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];renderStatusPills()});
+})();
 
 // ---- URL PREFILL ----
 function urlPrefill(inp){if(!inp.value.trim()){inp.value='http://';inp.setSelectionRange(7,7)}}
@@ -242,7 +256,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   if(_params.get('email'))document.getElementById('f-email').value=_params.get('email');
   if(_params.get('writer'))addWriterRow(_params.get('writer'),'',false);
   else addWriterRow('','',false);
-  renderStatusPills();
+  if(_statuses.length)renderStatusPills();
   // Check for edit token
   const editToken=_params.get('edit');
   if(editToken){loadEditMode(editToken)}

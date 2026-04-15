@@ -650,7 +650,11 @@ function songActions(rec,headers){
     b+=`<span class="admin-badge" style="color:${color}" title="Song Admin: ${done}/${items.length} tasks done">☑ ${done}/${items.length}</span>`;
   }
   b+=`<button class="btn btn-sm" onclick="exportSongMeta(${rec._row_index})" title="Copy full song metadata as formatted text">📄 Export</button>`;
+  b+=`<button class="btn btn-sm" onclick="downloadLyricDoc(${rec._row_index})" title="Download formatted lyric doc PDF">📄 Lyric Doc</button>`;
   return b;
+}
+function downloadLyricDoc(ri){
+  window.open('/api/songs/'+ri+'/lyric-doc','_blank');
 }
 function dirActions(rec,headers){
   let b='';const email=fv(rec,headers,'email'),ri=rec._row_index,name=fv(rec,headers,'name');

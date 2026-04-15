@@ -7,12 +7,13 @@ import os, json, math, functools, re, logging, time, threading
 from datetime import datetime, timedelta
 from collections import deque
 from flask import (Flask, render_template, request, jsonify,
-                   redirect, url_for, session, flash)
+                   redirect, url_for, session, flash, send_from_directory)
 
 from modules.google_sheets import SheetsManager
 from modules.pitch_builder import PitchBuilder
 from modules.pub_splits import PubSplitCalculator
 from modules.id_resolver import IDResolver
+from modules.lyric_doc import auto_generate_and_link as generate_lyric_doc
 
 logging.basicConfig(filename='rollon.log', level=logging.WARNING,
     format='%(asctime)s %(levelname)s %(message)s')
@@ -670,7 +671,7 @@ def api_autocomplete(table, field):
     tmap = {'songs':'Songs','directory':'Personnel','personnel':'Personnel',
         'cities':'Cities','mgmt':'MGMT Companies','labels':'Record Labels',
         'publishers':'Publishing Company','agents':'Agent','studios':'Studios',
-        'agencies':'Agency Company'}
+        'agencies':'Agency Company','invoices':'Invoices'}
     sn = tmap.get(table.lower(), table)
     try:
         data = sheets.get_all_rows(sn)
@@ -959,9 +960,40 @@ def api_songs_update():
             now = datetime.now().strftime('%Y-%m-%d %H:%M')
             sheets.update_cell('Songs', ri, lm_col+1, now)
         autos = run_song_automations(ri, field, d['value'], headers)
+        # Auto-regenerate lyric doc when lyrics change
+        if cleanH(field).lower() == 'lyrics' and d['value'].strip():
+            try:
+                generate_lyric_doc(sheets, 'Songs', ri, headers)
+            except Exception as le:
+                logging.warning(f"Lyric doc regen failed for row {ri}: {le}")
         return jsonify({'success':True,'automations':autos})
     except Exception as e:
         logging.exception('Songs update failed')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/songs/<int:row_index>/lyric-doc')
+@login_required
+def api_song_lyric_doc(row_index):
+    """Generate or serve the lyric doc PDF for a song."""
+    try:
+        headers = sheets.get_headers('Songs')
+        row = sheets.get_row('Songs', row_index)
+        record = {}
+        for j, h in enumerate(headers):
+            record[h] = row[j] if j < len(row) else ''
+        from modules.lyric_doc import generate_from_record
+        url = generate_from_record(record, headers)
+        if url:
+            # Update the Lyric Doc field
+            ld_col = find_col(headers, 'lyric doc', 'lyric docs', 'lyrics docs')
+            if ld_col is not None:
+                sheets.update_cell('Songs', row_index, ld_col + 1, url)
+            filename = os.path.basename(url)
+            docs_dir = os.path.join(app.static_folder, 'lyric_docs')
+            return send_from_directory(docs_dir, filename, as_attachment=True,
+                                       download_name=filename)
+        return jsonify({'error': 'No lyrics found for this song'}), 404
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/songs/<int:row_index>')
@@ -1837,6 +1869,13 @@ def api_submit_song():
         try: build_name_cache()
         except: pass
         logging.info(f"Song submitted: {title} by {submitter} ({email})")
+        # Auto-generate lyric doc PDF if lyrics were included
+        if lyrics:
+            try:
+                new_row_idx = sheets.get_row_count('Songs') + 1
+                generate_lyric_doc(sheets, 'Songs', new_row_idx, headers)
+            except Exception as le:
+                logging.warning(f"Lyric doc generation failed on submit: {le}")
         # Generate edit token (24h expiry)
         token = secrets.token_urlsafe(32)
         _edit_tokens[token] = {
@@ -2093,6 +2132,34 @@ def api_public_search_names():
         matches = [v['name'] for k, v in NAME_CACHE.items()
                    if ql in k and v['table'] == 'Personnel'][:10]
     return jsonify({'names': matches})
+
+
+@app.route('/api/public/autocomplete/<table>/<field>')
+def api_public_autocomplete(table, field):
+    """Public autocomplete for submit form — returns unique field values, no auth required."""
+    if not rate_limit_check(max_per_hour=200):
+        return jsonify({'values': []}), 429
+    tmap = {'songs': 'Songs', 'directory': 'Personnel', 'personnel': 'Personnel'}
+    sn = tmap.get(table.lower())
+    if not sn:
+        return jsonify({'values': []})
+    try:
+        data = sheets.get_all_rows(sn)
+        if not data:
+            return jsonify({'values': []})
+        headers = data[0]; rows = data[1:]
+        col = find_col(headers, field)
+        if col is None:
+            return jsonify({'values': []})
+        vals = set()
+        for row in rows:
+            if col < len(row):
+                for t in split_tags(str(row[col])):
+                    if t and not t.startswith('rec') and not t.isdigit() and len(t) > 1:
+                        vals.add(t)
+        return jsonify({'values': sorted(vals)})
+    except Exception as e:
+        return jsonify({'values': []})
 
 
 @app.route('/pitch')

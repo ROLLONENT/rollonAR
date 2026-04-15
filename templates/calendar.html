@@ -30,6 +30,7 @@ const C={
   filters:[],views:{},currentView:'All',
 
   init(){
+    window._currentTable='songs';
     try{this.views=JSON.parse(localStorage.getItem('rollon_cal_views')||'{}')}catch(e){}
     this.currentView=localStorage.getItem('rollon_cal_current_view')||'All';
     if(!this.views['All'])this.views['All']={filters:[]};

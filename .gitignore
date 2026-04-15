@@ -9,3 +9,4 @@ rollon.log
 .edit_tokens.json
 migrate_attachments.py
 migrate_invoices.py
+static/lyric_docs/
