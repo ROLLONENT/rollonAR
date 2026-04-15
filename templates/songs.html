@@ -284,13 +284,23 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     {label:'Title (required)',placeholder:'Song title'},
     {label:'Artist',placeholder:'Performing artist'},
     {label:'Producer',placeholder:'Producer name(s)'},
-    {label:'Audio Status',placeholder:'Demo',type:'select',options:['Demo','Production','Mixed','Mastered','Pitch Ready']},
+    {label:'Audio Status',type:'select',options:['Demo','Production','Mixed','Mastered','Pitch Ready','Released']},
+    {label:'Genre',placeholder:'e.g. Pop, Dance',type:'tags',options:['Pop','Dance','R&B','Hip Hop','Country','Rock','Indie','Electronic','KPOP','Singer-Songwriter','Sync','Afrobeats','Latin','Alternative']},
+    {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:['Pop Pitch','Dance Pitch','KPOP Pitch','SSW Pitch','Sync Pitch','BW Collab','Pitch Ready','New Submission','EMMMA 2025 Pitch','Writing Trip','PW Tour']},
+    {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
+    {label:'Duration',placeholder:'e.g. 3:25'},
+    {label:'BPM',placeholder:'e.g. 120'},
   ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Title is required','error');return}
     const data={Title:v[0].trim()};
     if(v[1])data['Artist']=v[1].trim();
     if(v[2])data['Producer']=v[2].trim();
     if(v[3])data['Audio Status']=v[3];
+    if(v[4])data['Genre']=v[4];
+    if(v[5])data['Tag']=v[5];
+    if(v[6])data['Songwriter Credits']=v[6].trim();
+    if(v[7])data['Duration']=v[7].trim();
+    if(v[8])data['BPM']=v[8].trim();
     fetch('/api/songs/new',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
         if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load()}
