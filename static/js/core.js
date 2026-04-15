@@ -1,8 +1,22 @@
-/* ROLLON AR v32d — Core JS — Google Sheets master, no Airtable */
+/* ROLLON AR v35 — Core JS — Google Sheets master, no Airtable */
 
 let TAG_COLORS={},PILL_COLORED=false;
 fetch('/api/config').then(r=>r.json()).then(d=>{TAG_COLORS=d.tag_colors||{}}).catch(()=>{});
 try{const stored=localStorage.getItem('pill_colored');if(stored!==null)PILL_COLORED=stored==='true'}catch(e){}
+
+// ---- MULTI-SORT HELPERS (used by invoices and other pages with sortFields array) ----
+function sortFieldsToURL(fields){
+  if(!fields||!fields.length)return '';
+  return fields.map((s,i)=>`&sort${i}_field=${encodeURIComponent(s.col||'')}&sort${i}_dir=${s.dir||'asc'}`).join('');
+}
+function sortFieldsForGrid(fields){
+  if(!fields||!fields.length)return {field:'',dir:'asc'};
+  return {field:fields[0].col||'',dir:fields[0].dir||'asc'};
+}
+
+// ---- SESSION MEMORY (restore last page state) ----
+function saveSessionState(page,data){try{sessionStorage.setItem('rollon_session_'+page,JSON.stringify(data))}catch(e){}}
+function loadSessionState(page){try{return JSON.parse(sessionStorage.getItem('rollon_session_'+page)||'{}')}catch(e){return {}}}
 
 // ---- NAV HISTORY (back button) ----
 const NAV_STACK=[];
@@ -69,16 +83,23 @@ function closeLongTextPopup(){document.querySelector('.longtext-overlay')?.remov
 
 // ---- KEYBOARD ----
 document.addEventListener('keydown',e=>{
+  const tag=document.activeElement?.tagName;
+  const isInput=tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT';
   if((e.metaKey||e.ctrlKey)&&e.key==='z'){
-    const tag=document.activeElement?.tagName;
-    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+    if(isInput)return;
     e.preventDefault();
     fetch('/api/undo',{method:'POST'}).then(r=>r.json()).then(d=>{
       if(d.success){toast('Undo: '+d.field+' restored');if(typeof reload==='function')reload()}
       else toast(d.error||'Nothing to undo','error')
     })}
+  // Cmd+Enter: save and close modal
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){
+    const saveBtn=document.querySelector('.lt-save');
+    if(saveBtn){e.preventDefault();saveBtn.click();return}
+    const promptOk=document.getElementById('prompt-ok');
+    if(promptOk){e.preventDefault();promptOk.click();return}
+  }
   if(e.key==='Escape'){
-    // If editing inline, cancel edit and refresh detail
     const ie=document.querySelector('.inline-edit');
     if(ie){const dv=ie.closest('.detail-value');if(dv){const ri=parseInt(dv.dataset.row),t=dv.dataset.table;refreshDetail(ri,t);return}}
     const ta=document.querySelector('.typeahead-wrap');if(ta){ta.remove();return}
@@ -87,7 +108,34 @@ document.addEventListener('keydown',e=>{
     const pm=document.getElementById('prompt-modal');if(pm){pm.remove();return}
     closeModal();
   }
+  // Shortcuts (only when not in input)
+  if(isInput)return;
+  // / focuses search
+  if(e.key==='/'){e.preventDefault();const si=document.querySelector('.search-input')||document.getElementById('global-search');if(si)si.focus()}
+  // N for new record
+  if(e.key==='n'||e.key==='N'){
+    if(typeof S!=='undefined'&&S.newRecord&&document.querySelector('[href="/songs"].active'))S.newRecord();
+    else if(typeof D!=='undefined'&&D.newRecord&&document.querySelector('[href="/directory"].active'))D.newRecord();
+  }
+  // ? for shortcuts overlay
+  if(e.key==='?')showShortcutsOverlay();
 });
+
+function showShortcutsOverlay(){
+  document.querySelector('.shortcuts-overlay')?.remove();
+  const ov=document.createElement('div');ov.className='shortcuts-overlay';
+  ov.innerHTML=`<div class="shortcuts-box"><h3 style="color:var(--accent);margin-bottom:12px;font-family:var(--font-d)">Keyboard Shortcuts</h3>
+    <div class="sc-row"><kbd>/</kbd><span>Focus search</span></div>
+    <div class="sc-row"><kbd>N</kbd><span>New record</span></div>
+    <div class="sc-row"><kbd>Esc</kbd><span>Close modal / cancel edit</span></div>
+    <div class="sc-row"><kbd>Cmd+Z</kbd><span>Undo last change</span></div>
+    <div class="sc-row"><kbd>Cmd+Enter</kbd><span>Save and close</span></div>
+    <div class="sc-row"><kbd>?</kbd><span>Show this help</span></div>
+    <button class="btn btn-sm" onclick="this.closest('.shortcuts-overlay').remove()" style="margin-top:12px">Close</button>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove()});
+  document.body.appendChild(ov);
+}
 
 // ---- OUTSIDE CLICK ----
 document.addEventListener('click',e=>{
@@ -318,11 +366,35 @@ function renderTagPills(v){const tags=splitP(v);const ac='#d4a853';return '<div 
   return `<span class="pill pill-tag" style="background:${ac}20;color:${ac};border:1px solid ${ac}40">${esc(t)}</span>`}).join('')+'</div>'}
 
 function renderLinkedPills(v){const items=splitP(v).sort((a,b)=>a.localeCompare(b));return '<div class="cell-pills">'+items.map(t=>
-  `<span class="pill pill-link" onclick="event.stopPropagation();navToRecord('${escA(t)}')" style="cursor:pointer">${esc(t)}</span>`).join('')+'</div>'}
+  `<span class="pill pill-link" onclick="event.stopPropagation();navToRecord('${escA(t)}')" onmouseenter="showPeek(event,'${escA(t)}')" onmouseleave="hidePeek()" style="cursor:pointer">${esc(t)}</span>`).join('')+'</div>'}
 
 // Navigable version for detail modal only
 function renderLinkedPillsNav(v){const items=splitP(v).sort((a,b)=>a.localeCompare(b));return '<div class="cell-pills">'+items.map(t=>
-  `<span class="pill pill-link" onclick="event.stopPropagation();navToRecord('${escA(t)}')" style="cursor:pointer">${esc(t)}</span>`).join('')+'</div>'}
+  `<span class="pill pill-link" onclick="event.stopPropagation();navToRecord('${escA(t)}')" onmouseenter="showPeek(event,'${escA(t)}')" onmouseleave="hidePeek()" style="cursor:pointer">${esc(t)}</span>`).join('')+'</div>'}
+
+// ---- HOVER PEEK CARD ----
+let _peekTimer=null,_peekEl=null;
+function showPeek(e,name){
+  clearTimeout(_peekTimer);
+  _peekTimer=setTimeout(()=>{
+    fetch(`/api/quick-lookup?name=${encodeURIComponent(name)}`).then(r=>r.json()).then(d=>{
+      if(!d.found)return;
+      hidePeek();
+      _peekEl=document.createElement('div');_peekEl.className='peek-card';
+      let html=`<div class="peek-name">${esc(d.name||name)}</div>`;
+      if(d.field)html+=`<div class="peek-field">${esc(d.field)}</div>`;
+      if(d.city)html+=`<div class="peek-row">${esc(d.city)}</div>`;
+      if(d.email)html+=`<div class="peek-row">${esc(d.email)}</div>`;
+      if(d.last_outreach)html+=`<div class="peek-row">Last outreach: ${esc(d.last_outreach)}</div>`;
+      _peekEl.innerHTML=html;
+      const rect=e.target.getBoundingClientRect();
+      _peekEl.style.left=Math.min(rect.left,window.innerWidth-320)+'px';
+      _peekEl.style.top=(rect.bottom+6)+'px';
+      document.body.appendChild(_peekEl);
+    }).catch(()=>{});
+  },400);
+}
+function hidePeek(){clearTimeout(_peekTimer);if(_peekEl){_peekEl.remove();_peekEl=null}}
 
 function renderTextPills(v){const items=splitP(v);if(items.length===1&&items[0].length>50)return `<span class="cell-text">${esc(items[0])}</span>`;
   return '<div class="cell-pills">'+items.map(t=>`<span class="pill">${esc(t)}</span>`).join('')+'</div>'}
@@ -398,11 +470,16 @@ function renderDetailModal(record,headers,table){
   html+=`<div id="tab-details" class="modal-tab-content active">`;
   html+=`<div class="detail-toolbar"><button class="hide-empty-pill ${_hideEmpty?'active':''}" onclick="toggleHideEmpty(!this.classList.contains('active'))">${_hideEmpty?'Show All Fields':'Hide Empty'}</button></div>`;
   html+=`<div class="detail-grid" ${_hideEmpty?'data-hide-empty="1"':''}>`;
+  // Rights & Registration fields to group into collapsible section
+  const RIGHTS_FIELDS=['writer 1 ipi','writer 2 ipi','writer 3 ipi','publisher 1','publisher 1 ipi','publisher 2','publisher 2 ipi','publisher 3','publisher 3 ipi','isrc','iswc','cat no','gtin/barcode','gtin','barcode'];
+  let rightsHtml='';
+  let hasRightsData=false;
   for(const h of headers){
     const ch=cleanH(h);const chLow=ch.toLowerCase();
     if(tabFields.includes(h))continue;
     const val=record[h]||'';const type=fieldType(h);
     const isEmpty=!val||!val.trim();
+    if(!isEmpty&&RIGHTS_FIELDS.includes(chLow))hasRightsData=true;
     // ID field is read-only
     if(chLow==='airtable id'||chLow==='system id'){
       if(val){html+=`<div class="detail-label">System ID</div><div class="detail-value" style="font-family:var(--font-m);font-size:11px;color:var(--text-ghost);cursor:pointer" onclick="copyText('${escA(val)}')" title="Click to copy">${esc(val)}</div>`}
@@ -2088,6 +2165,8 @@ function exportCurrentView(table){
         return '"'+v+'"';
       }).join(',')+'\n';
     });
+    // Add branding row
+    csv+='\n"Generated by ROLLON AR | rollonent.com"\n';
     // Download
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
     const link=document.createElement('a');
@@ -2096,6 +2175,12 @@ function exportCurrentView(table){
     link.click();setTimeout(()=>URL.revokeObjectURL(link.href),5000);
     toast(`Exported ${d.records.length} records`);
   });
+}
+
+// ==================== EMPTY STATE ====================
+function showEmptyState(containerId,message,icon){
+  const c=document.getElementById(containerId);if(!c)return;
+  c.innerHTML=`<div class="empty-state"><div class="empty-icon">${icon||''}</div><div class="empty-msg">${message||'No records found'}</div></div>`;
 }
 
 // ==================== FEATURE: CSV BULK IMPORT ====================

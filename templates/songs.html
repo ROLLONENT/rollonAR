@@ -36,6 +36,8 @@
       <button class="btn btn-sm" onclick="createPlaylistFromSongs()" title="Create playlist from selected songs">🎵</button>
       <button class="btn btn-sm" onclick="togglePillColors()" title="Toggle pill colors">🎨</button>
       <button class="btn btn-sm" onclick="openDuplicateFinder()" title="Find duplicate records">🔍 Dupes</button>
+      <button class="btn btn-sm" onclick="sendDistribution('Rightsbridge')" title="Send to Rightsbridge">📋 Rightsbridge</button>
+      <button class="btn btn-sm" onclick="sendDistribution('Sync')" title="Send to Sync contacts">📋 Sync</button>
       <div class="toolbar-right"><span class="toolbar-info" id="record-count"></span></div>
     </div>
     <div class="bulk-bar" id="bulk-bar">
@@ -285,32 +287,47 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     Promise.all([
       fetch('/api/autocomplete/songs/Audio Status?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
       fetch('/api/autocomplete/songs/Genre?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
-      fetch('/api/autocomplete/songs/Tag?limit=50').then(r=>r.json()).catch(()=>({values:[]}))
-    ]).then(([asData,genData,tagData])=>{
+      fetch('/api/autocomplete/songs/Tag?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/songs/Project?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/songs/Format?limit=50').then(r=>r.json()).catch(()=>({values:[]}))
+    ]).then(([asData,genData,tagData,projData,fmtData])=>{
       const statuses=asData.values&&asData.values.length?asData.values:['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];
       const genres=genData.values&&genData.values.length?genData.values:['Pop','Dance','R&B'];
       const tags=tagData.values&&tagData.values.length?tagData.values:['Pop Pitch','Dance Pitch'];
+      const projects=projData.values&&projData.values.length?projData.values:[];
+      const formats=fmtData.values&&fmtData.values.length?fmtData.values:[];
       showPromptModal('New Song',[
+        // Core
         {label:'Title (required)',placeholder:'Song title'},
         {label:'Artist',placeholder:'Performing artist'},
         {label:'Producer',placeholder:'Producer name(s)'},
         {label:'Audio Status',type:'select',options:statuses},
+        // Metadata
         {label:'Genre',placeholder:'e.g. Pop, Dance',type:'tags',options:genres},
-        {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:tags},
-        {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
-        {label:'Duration',placeholder:'e.g. 3:25'},
         {label:'BPM',placeholder:'e.g. 120'},
+        {label:'Duration',placeholder:'e.g. 3:25'},
+        {label:'Key',placeholder:'e.g. C minor'},
+        {label:'Mood',placeholder:'e.g. Upbeat, Melancholic'},
+        // Credits
+        {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
+        {label:'Vocalist',placeholder:'Vocalist name'},
+        // Tags & Project
+        {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:tags},
+        {label:'Project',type:'select',options:projects.length?projects:['']},
+        {label:'Format',type:'select',options:formats.length?formats:['']},
+        // Links
+        {label:'Dropbox Link',placeholder:'https://dropbox.com/...'},
+        {label:'DISCO',placeholder:'https://disco.ac/...'},
+        // Registration
+        {label:'Release Date',placeholder:'YYYY-MM-DD'},
+        {label:'ISRC',placeholder:'e.g. USRC12345678'},
+        {label:'Record Label',placeholder:'Label name'},
       ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Title is required','error');return}
-    const data={Title:v[0].trim()};
-    if(v[1])data['Artist']=v[1].trim();
-    if(v[2])data['Producer']=v[2].trim();
-    if(v[3])data['Audio Status']=v[3];
-    if(v[4])data['Genre']=v[4];
-    if(v[5])data['Tag']=v[5];
-    if(v[6])data['Songwriter Credits']=v[6].trim();
-    if(v[7])data['Duration']=v[7].trim();
-    if(v[8])data['BPM']=v[8].trim();
+    const fieldMap=['Title','Artist','Producer','Audio Status','Genre','BPM','Duration','Key','Mood',
+      'Songwriter Credits','Vocalist','Tag','Project','Format','Dropbox Link','DISCO','Release Date','ISRC','Record Label'];
+    const data={};
+    fieldMap.forEach((f,i)=>{if(v[i]&&v[i].trim())data[f]=v[i].trim()});
     fetch('/api/songs/new',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
         if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load()}
@@ -373,5 +390,38 @@ try{const or=JSON.parse(sessionStorage.getItem('open_record')||'null');
       if(S.headers.length)renderDetailModal(rec,S.headers,'songs');
       else setTimeout(()=>renderDetailModal(rec,S.headers,'songs'),500);
     })},800)}}catch(e){}
+
+function sendDistribution(channel){
+  const sel=window._selectedRows||new Set();
+  let songIds=sel.size?[...sel]:[];
+  if(!songIds.length){
+    // Use all visible songs
+    document.querySelectorAll('tr[data-ri]').forEach(tr=>{const ri=parseInt(tr.dataset.ri);if(ri)songIds.push(ri)});
+  }
+  if(!songIds.length){toast('No songs to distribute','error');return}
+  // Get titles for confirmation
+  const titles=songIds.slice(0,10).map(ri=>{const c=cacheGet(ri);return c?Object.values(c).find(v=>typeof v==='string'&&v.length>1&&!v.startsWith('RLN'))||`Row ${ri}`:`Row ${ri}`});
+  const more=songIds.length>10?`\n... and ${songIds.length-10} more`:'';
+  showPromptModal(`Send to ${channel} (${songIds.length} songs)`,[
+    {label:'Recipient Email',placeholder:`distribution@${channel.toLowerCase()}.com`},
+    {label:`Songs: ${titles.join(', ')}${more}`,placeholder:'Confirm by clicking OK'}
+  ],(v)=>{
+    fetch('/api/distribution/send',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({channel:channel,song_indices:songIds,recipient:v[0]||''})
+    }).then(r=>r.json()).then(d=>{
+      if(d.success){
+        toast(`${channel}: ${d.songs} songs distributed`+(d.email_sent?' (email sent)':' (CSV ready)'));
+        if(d.csv&&!d.email_sent){
+          const blob=new Blob([d.csv],{type:'text/csv'});
+          const link=document.createElement('a');
+          link.href=URL.createObjectURL(blob);
+          link.download=`rollon_${channel.toLowerCase()}_${new Date().toISOString().split('T')[0]}.csv`;
+          link.click();
+        }
+        S.load();
+      } else toast(d.error||'Distribution failed','error');
+    });
+  });
+}
 </script>
 {% endblock %}

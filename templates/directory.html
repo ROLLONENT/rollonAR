@@ -273,19 +273,31 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     this.currentView=n;ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('View saved: '+n)})},
 
   newRecord(){
-    fetch('/api/autocomplete/directory/Field?limit=50').then(r=>r.json()).catch(()=>({values:[]})).then(fieldData=>{
+    Promise.all([
+      fetch('/api/autocomplete/directory/Field?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/directory/Tags?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/directory/Genre?limit=50').then(r=>r.json()).catch(()=>({values:[]}))
+    ]).then(([fieldData,tagData,genData])=>{
       const fieldOpts=fieldData.values&&fieldData.values.length?fieldData.values:['Record A&R','MGMT','Publishing A&R','Agent','Music Supervisor','Sync'];
+      const tagOpts=tagData.values&&tagData.values.length?tagData.values:[];
+      const genOpts=genData.values&&genData.values.length?genData.values:[];
       showPromptModal('New Contact',[
         {label:'Name (required)',placeholder:'Full name'},
         {label:'Email',placeholder:'email@example.com'},
         {label:'Field',placeholder:'A&R, MGMT, Sync...',type:'select',options:fieldOpts},
         {label:'City',placeholder:'Los Angeles, London...'},
+        {label:'Phone',placeholder:'+1 555 1234'},
+        {label:'Tags',type:'tags',options:tagOpts},
+        {label:'Genre',type:'tags',options:genOpts},
+        {label:'Record Label',placeholder:'Label name'},
+        {label:'MGMT Company',placeholder:'Management company'},
+        {label:'LinkedIn/Socials',placeholder:'https://linkedin.com/in/...'},
+        {label:'Notes',placeholder:'Any notes about this contact'},
       ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Name is required','error');return}
-    const data={Name:v[0].trim()};
-    if(v[1])data['Email']=v[1].trim();
-    if(v[2])data['Field']=v[2];
-    if(v[3])data['City']=v[3].trim();
+    const fieldMap=['Name','Email','Field','City','Phone','Tags','Genre','Record Label','MGMT Company','LinkedIn/Socials','Bio'];
+    const data={};
+    fieldMap.forEach((f,i)=>{if(v[i]&&v[i].trim())data[f]=v[i].trim()});
     fetch('/api/directory/new',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
         if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load();

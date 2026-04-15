@@ -41,6 +41,11 @@
     <div class="dash-chart" id="chart-followups"><h3>Follow-up Reminders</h3><div class="loading"><span class="spinner"></span></div></div>
     <div class="dash-activity" id="activity-feed"><h3 style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Recent Activity</h3><div class="loading"><span class="spinner"></span></div></div>
   </div>
+
+  <div class="dash-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="dash-chart" id="chart-briefing"><h3>Morning Briefing</h3><div class="loading"><span class="spinner"></span></div></div>
+    <div class="dash-chart" id="chart-overdue"><h3>Invoice Alerts</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -117,6 +122,41 @@ fetch('/api/follow-ups').then(r=>r.json()).then(d=>{
   } else {
     fc.innerHTML='<h3>Follow-up Reminders</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No follow-ups due. All contacts are up to date.</p>';
   }
+}).catch(()=>{});
+
+// Morning briefing
+fetch('/api/briefing').then(r=>r.json()).then(d=>{
+  const bc=document.getElementById('chart-briefing');
+  let html='<h3>Morning Briefing</h3>';
+
+  if(d.stale_songs?.length){
+    html+=`<div style="font-size:11px;color:var(--danger);margin-bottom:6px">${d.stale_songs.length} songs with no activity in 30+ days</div>`;
+    d.stale_songs.slice(0,5).forEach(s=>{
+      html+=`<div class="upcoming-item"><span class="upcoming-title">${s.title}</span><span class="upcoming-days">${s.days}d stale</span></div>`;
+    });
+  } else {
+    html+='<div style="font-size:11px;color:var(--success);margin-bottom:6px">All songs active</div>';
+  }
+
+  bc.innerHTML=html;
+
+  // Invoice alerts
+  const oc=document.getElementById('chart-overdue');
+  let oh='<h3>Invoice Alerts</h3>';
+
+  if(d.overdue_invoices?.count>0){
+    oh+=`<div style="font-size:13px;color:var(--danger);font-weight:600;margin-bottom:6px">${d.overdue_invoices.count} OVERDUE ($${d.overdue_invoices.amount.toLocaleString()})</div>`;
+  }
+  if(d.upcoming_invoices?.length){
+    oh+=`<div style="font-size:11px;color:var(--accent);margin-bottom:6px">${d.upcoming_invoices.length} due within 7 days</div>`;
+    d.upcoming_invoices.forEach(inv=>{
+      oh+=`<div class="upcoming-item"><span class="upcoming-title">${inv.invoice_no} - ${inv.client}</span><span class="upcoming-date">$${inv.amount}</span><span class="upcoming-days">${inv.days===0?'TODAY':inv.days+'d'}</span></div>`;
+    });
+  }
+  if(!d.overdue_invoices?.count&&!d.upcoming_invoices?.length){
+    oh+='<div style="font-size:11px;color:var(--success)">No invoice alerts</div>';
+  }
+  oc.innerHTML=oh;
 }).catch(()=>{});
 </script>
 {% endblock %}

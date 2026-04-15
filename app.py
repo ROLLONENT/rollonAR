@@ -1,5 +1,5 @@
 """
-ROLLON AR v34 — A&R Operating System
+ROLLON AR v35 — A&R Operating System
 Google Sheets master. No external dependencies.
 """
 
@@ -697,20 +697,36 @@ def api_autocomplete(table, field):
 @app.route('/api/quick-lookup')
 @login_required
 def api_quick_lookup():
-    """Instant name-to-record lookup using pre-built cache. Zero search overhead."""
+    """Instant name-to-record lookup with peek data (field, city, email, last outreach)."""
     name = request.args.get('name', '').strip()
     if not name: return jsonify({'error': 'No name'}), 400
     with NAME_CACHE_LOCK:
         entry = NAME_CACHE.get(name.lower())
-    if entry:
-        return jsonify(entry)
-    # Fallback: partial match
-    nl = name.lower()
-    with NAME_CACHE_LOCK:
-        for k, v in NAME_CACHE.items():
-            if k == nl or nl in k:
-                return jsonify(v)
-    return jsonify({'error': 'Not found'}), 404
+    if not entry:
+        nl = name.lower()
+        with NAME_CACHE_LOCK:
+            for k, v in NAME_CACHE.items():
+                if k == nl or nl in k:
+                    entry = v; break
+    if not entry:
+        return jsonify({'error': 'Not found'}), 404
+    result = dict(entry)
+    result['found'] = True
+    # Fetch additional peek data for Personnel
+    if entry.get('table') == 'Personnel':
+        try:
+            row = sheets.get_row('Personnel', entry['row_index'])
+            per_h = sheets.get_headers('Personnel')
+            fc = find_col(per_h, 'field')
+            cc = find_col(per_h, 'city')
+            ec = find_col(per_h, 'email')
+            lc = find_col(per_h, 'last outreach')
+            if fc is not None and fc < len(row): result['field'] = row[fc].strip()
+            if cc is not None and cc < len(row): result['city'] = row[cc].strip()
+            if ec is not None and ec < len(row): result['email'] = row[ec].strip()
+            if lc is not None and lc < len(row): result['last_outreach'] = row[lc].strip()
+        except: pass
+    return jsonify(result)
 
 
 # ==================== UNDO ====================
@@ -952,14 +968,17 @@ def api_songs_update():
         ci = headers.index(field)
         old_row = sheets.get_row('Songs', ri)
         old_val = old_row[ci] if ci < len(old_row) else ''
-        sheets.update_cell('Songs', ri, ci+1, str(d['value']))
-        record_undo('Songs', ri, field, old_val, d['value'])
-        # Auto-update Last Modified
+        # Batch: field value + Last Modified in single API call
+        batch = [(ri, ci+1, str(d['value']))]
         lm_col = find_col(headers, 'last modified')
         if lm_col is not None and cleanH(field).lower() != 'last modified':
-            from datetime import datetime
             now = datetime.now().strftime('%Y-%m-%d %H:%M')
-            sheets.update_cell('Songs', ri, lm_col+1, now)
+            batch.append((ri, lm_col+1, now))
+        mb_col = find_col(headers, 'modified by')
+        if mb_col is not None:
+            batch.append((ri, mb_col+1, session.get('user_name', 'System')))
+        sheets.batch_update_cells('Songs', batch)
+        record_undo('Songs', ri, field, old_val, d['value'])
         autos = run_song_automations(ri, field, d['value'], headers)
         # Auto-regenerate lyric doc when lyrics change
         if cleanH(field).lower() == 'lyrics' and d['value'].strip():
@@ -3197,6 +3216,277 @@ def api_invoice_flags():
                 flags[inv_no] = {'days': days_overdue, 'color': color, 'row_index': i + 2}
             except: pass
         return jsonify({'flags': flags})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== DISTRIBUTION SYSTEM ====================
+def _ensure_dist_log():
+    """Create Distribution Log sheet if it doesn't exist."""
+    try:
+        data = sheets.get_all_rows('Distribution Log')
+        if data: return True
+    except: pass
+    try:
+        sheets.create_new_sheet('Distribution Log')
+        headers = ['Date', 'Channel', 'Recipient', 'Song Count', 'Song Titles', 'Status']
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Distribution Log'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute()
+        sheets._invalidate_cache('Distribution Log')
+        return True
+    except: return False
+
+@app.route('/api/distribution/send', methods=['POST'])
+@admin_required
+def api_distribution_send():
+    """Send distribution CSV (Rightsbridge, Sync, or custom channel)."""
+    d = request.json or {}
+    channel = d.get('channel', 'Rightsbridge')
+    song_indices = d.get('song_indices', [])
+    recipient_email = d.get('recipient', '')
+    fields = d.get('fields', [])
+    recipients = d.get('recipients', [])  # For sync: list of contact names/emails
+
+    if not song_indices:
+        return jsonify({'error': 'No songs selected'}), 400
+
+    try:
+        song_data = sheets.get_all_rows('Songs')
+        if not song_data or len(song_data) < 2:
+            return jsonify({'error': 'No songs data'}), 400
+        headers = song_data[0]
+
+        # Default field sets per channel
+        if not fields:
+            if channel == 'Rightsbridge':
+                fields = ['Title', 'Artist', 'Songwriter Credits', 'Producer', 'ISRC', 'Duration', 'BPM', 'Release Date', 'Audio Status', 'Genre', 'Record Label', 'Dropbox Link']
+            elif channel == 'Sync':
+                fields = ['Title', 'Artist', 'Genre', 'BPM', 'Duration', 'Audio Status', 'Mood', 'Instrumentation', 'Dropbox Link', 'DISCO', 'Sync Notes', 'Songwriter Credits', 'Producer', 'ISRC']
+            else:
+                fields = ['Title', 'Artist', 'Genre', 'Audio Status', 'Dropbox Link']
+
+        # Build CSV
+        field_cols = []
+        for fn in fields:
+            col = find_col(headers, fn)
+            if col is not None:
+                field_cols.append((fn, col))
+
+        csv_header = ','.join([f'"{fn}"' for fn, _ in field_cols])
+        csv_rows = []
+        song_titles = []
+        for ri in song_indices:
+            row = sheets.get_row('Songs', ri)
+            vals = []
+            for fn, ci in field_cols:
+                v = str(row[ci]).strip() if ci < len(row) else ''
+                # Convert Dropbox links to direct download
+                if 'dropbox' in fn.lower() and 'dl=0' in v:
+                    v = v.replace('dl=0', 'dl=1')
+                vals.append('"' + v.replace('"', '""') + '"')
+            csv_rows.append(','.join(vals))
+            # Get title for logging
+            tc = find_col(headers, 'title')
+            title = str(row[tc]).strip() if tc is not None and tc < len(row) else f'Row {ri}'
+            song_titles.append(title)
+
+        csv_content = csv_header + '\n' + '\n'.join(csv_rows) + '\n\n"Generated by ROLLON AR | rollonent.com"\n'
+
+        # Tag songs with distribution marker
+        tag_col = find_col(headers, 'tag')
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        tag_label = f"Sent to {channel} {date_str}"
+        if tag_col is not None:
+            updates = []
+            for ri in song_indices:
+                row = sheets.get_row('Songs', ri)
+                existing = str(row[tag_col]).strip() if tag_col < len(row) else ''
+                tags = split_tags(existing)
+                if tag_label not in tags:
+                    tags.append(tag_label)
+                    updates.append((ri, tag_col + 1, ' | '.join(tags)))
+            if updates:
+                sheets.batch_update_cells('Songs', updates)
+
+        # Log to Distribution Log
+        _ensure_dist_log()
+        recipient_str = recipient_email or ', '.join(recipients)
+        sheets.append_row('Distribution Log', [
+            date_str, channel, recipient_str,
+            str(len(song_indices)),
+            ' | '.join(song_titles[:20]),
+            'Sent'
+        ])
+
+        # Email CSV if SMTP configured and recipient provided
+        email_sent = False
+        if SMTP_PASS and recipient_email:
+            try:
+                import smtplib
+                from email.mime.text import MIMEText
+                from email.mime.multipart import MIMEMultipart
+                from email.mime.base import MIMEBase
+                from email import encoders
+
+                msg = MIMEMultipart()
+                msg['Subject'] = f'ROLLON AR - {channel} Distribution ({len(song_indices)} songs)'
+                msg['From'] = SMTP_FROM
+                msg['To'] = recipient_email
+                msg.attach(MIMEText(f'{channel} distribution: {len(song_indices)} songs attached.\n\nGenerated by ROLLON AR', 'plain'))
+
+                att = MIMEBase('application', 'octet-stream')
+                att.set_payload(csv_content.encode('utf-8'))
+                encoders.encode_base64(att)
+                att.add_header('Content-Disposition', f'attachment; filename="rollon_{channel.lower().replace(" ", "_")}_{date_str}.csv"')
+                msg.attach(att)
+
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                    server.starttls()
+                    server.login(SMTP_USER, SMTP_PASS)
+                    server.sendmail(SMTP_FROM, recipient_email, msg.as_string())
+                email_sent = True
+            except Exception as e:
+                logging.warning(f"Distribution email failed: {e}")
+
+        return jsonify({
+            'success': True,
+            'songs': len(song_indices),
+            'channel': channel,
+            'tag': tag_label,
+            'email_sent': email_sent,
+            'csv': csv_content
+        })
+    except Exception as e:
+        logging.exception('Distribution send failed')
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== SMART DEFAULTS (Intelligence) ====================
+@app.route('/api/smart-defaults')
+@login_required
+def api_smart_defaults():
+    """Get smart suggestions for a producer or writer based on historical data."""
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'genres': [], 'cowriters': []})
+    try:
+        data = sheets.get_all_rows('Songs')
+        if not data or len(data) < 2:
+            return jsonify({'genres': [], 'cowriters': []})
+        headers = data[0]
+        pc = find_col(headers, 'producer')
+        sc = find_col(headers, 'songwriter credits')
+        gc = find_col(headers, 'genre')
+        nl = name.lower()
+
+        genres = {}
+        cowriters = {}
+        for row in data[1:]:
+            # Check if this person is credited
+            prod = str(row[pc]).strip().lower() if pc is not None and pc < len(row) else ''
+            writers = str(row[sc]).strip().lower() if sc is not None and sc < len(row) else ''
+            if nl not in prod and nl not in writers:
+                continue
+            # Collect genres
+            if gc is not None and gc < len(row):
+                for g in split_tags(row[gc]):
+                    genres[g] = genres.get(g, 0) + 1
+            # Collect co-writers
+            if sc is not None and sc < len(row):
+                for w in split_tags(row[sc]):
+                    wl = w.strip()
+                    if wl.lower() != nl:
+                        cowriters[wl] = cowriters.get(wl, 0) + 1
+
+        top_genres = sorted(genres.items(), key=lambda x: -x[1])[:5]
+        top_cowriters = sorted(cowriters.items(), key=lambda x: -x[1])[:5]
+        return jsonify({
+            'genres': [g for g, _ in top_genres],
+            'cowriters': [w for w, _ in top_cowriters]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== MORNING BRIEFING (Intelligence) ====================
+@app.route('/api/briefing')
+@login_required
+def api_briefing():
+    """Morning briefing: stale songs, follow-ups, upcoming invoices, new submissions."""
+    result = {}
+    try:
+        now = datetime.now()
+
+        # Stale songs (no activity in 30 days)
+        song_data = sheets.get_all_rows('Songs')
+        if song_data and len(song_data) > 1:
+            sh = song_data[0]
+            lm_col = find_col(sh, 'last modified')
+            ti_col = find_col(sh, 'title')
+            stale = []
+            if lm_col is not None and ti_col is not None:
+                for i, row in enumerate(song_data[1:]):
+                    title = str(row[ti_col]).strip() if ti_col < len(row) else ''
+                    lm = str(row[lm_col]).strip() if lm_col < len(row) else ''
+                    if not title or not lm: continue
+                    try:
+                        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M'):
+                            try: d = datetime.strptime(lm, fmt); break
+                            except: d = None
+                        if d and (now - d).days > 30:
+                            stale.append({'title': title, 'days': (now - d).days, 'row_index': i + 2})
+                    except: pass
+                stale.sort(key=lambda x: -x['days'])
+                result['stale_songs'] = stale[:10]
+
+        # Upcoming invoice deadlines (7 days)
+        try:
+            inv_data = sheets.get_all_rows('Invoices')
+            if inv_data and len(inv_data) > 1:
+                ih = inv_data[0]
+                due_col = find_col(ih, 'due date')
+                no_col = find_col(ih, 'invoice no')
+                st_col = find_col(ih, 'status')
+                cl_col = find_col(ih, 'client')
+                am_col = find_col(ih, 'amount')
+                upcoming_inv = []
+                if due_col is not None:
+                    for row in inv_data[1:]:
+                        status = str(row[st_col]).strip().lower() if st_col is not None and st_col < len(row) else ''
+                        if status in ('paid', 'draft'): continue
+                        due_str = str(row[due_col]).strip() if due_col < len(row) else ''
+                        if not due_str: continue
+                        try:
+                            due = None
+                            for fmt in ('%Y-%m-%d', '%m/%d/%Y'):
+                                try: due = datetime.strptime(due_str, fmt); break
+                                except: pass
+                            if due and 0 <= (due - now).days <= 7:
+                                inv_no = str(row[no_col]).strip() if no_col is not None and no_col < len(row) else ''
+                                client = str(row[cl_col]).strip() if cl_col is not None and cl_col < len(row) else ''
+                                amount = str(row[am_col]).strip() if am_col is not None and am_col < len(row) else ''
+                                upcoming_inv.append({'invoice_no': inv_no, 'client': client, 'amount': amount, 'days': (due - now).days})
+                        except: pass
+                result['upcoming_invoices'] = upcoming_inv
+        except: pass
+
+        # Overdue count
+        try:
+            overdue_count = 0
+            overdue_amount = 0
+            if inv_data and len(inv_data) > 1:
+                for row in inv_data[1:]:
+                    status = str(row[st_col]).strip().lower() if st_col is not None and st_col < len(row) else ''
+                    if status == 'overdue':
+                        overdue_count += 1
+                        try: overdue_amount += float(str(row[am_col]).replace(',','').replace('$','')) if am_col is not None and am_col < len(row) else 0
+                        except: pass
+            result['overdue_invoices'] = {'count': overdue_count, 'amount': round(overdue_amount, 2)}
+        except: pass
+
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
