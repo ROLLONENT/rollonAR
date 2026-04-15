@@ -1,5 +1,5 @@
 """
-ROLLON AR v32e — A&R Operating System
+ROLLON AR v32d — A&R Operating System
 Google Sheets master. No external dependencies.
 """
 
@@ -56,13 +56,28 @@ ROLE_PAGES = {
 
 # Simple rate limiter for public endpoints (per IP)
 _submit_times = {}
-def rate_limit_check(ip, max_per_hour=10):
+_submit_lock = threading.Lock()
+
+def _get_client_ip():
+    """Get real client IP, checking X-Forwarded-For for proxy setups."""
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.remote_addr
+
+def rate_limit_check(ip=None, max_per_hour=10):
+    if ip is None:
+        ip = _get_client_ip()
+    # Authenticated admin/assistant users bypass rate limiting
+    if session.get('authenticated'):
+        return True
     now = time.time()
-    times = _submit_times.get(ip, [])
-    times = [t for t in times if now - t < 3600]
-    if len(times) >= max_per_hour: return False
-    times.append(now)
-    _submit_times[ip] = times
+    with _submit_lock:
+        times = _submit_times.get(ip, [])
+        times = [t for t in times if now - t < 3600]
+        if len(times) >= max_per_hour: return False
+        times.append(now)
+        _submit_times[ip] = times
     return True
 
 # Edit tokens for submission corrections (token -> {row_index, data, expires})
@@ -95,42 +110,6 @@ sheets = SheetsManager(GOOGLE_SHEET_ID, CREDENTIALS_PATH, TOKEN_PATH)
 pitch_builder = PitchBuilder(sheets)
 split_calc = PubSplitCalculator(sheets)
 resolver = IDResolver(sheets)
-
-# ==================== AUTO-CREATE MISSING SHEET TABS ====================
-_SHEET_SCHEMAS = {
-    'Invoices': ['Invoice No','Entity','Date','Client','Description','Amount','Expenses','Total','Currency','COMP GBP','Exchange','COMP + Exchange Total','Status','Due Date','Payment Date','Year','Category','Payee Name','Email','Commission','Celina Comms','Notes','Airtable ID'],
-    'Playlists': ['ID','Name','Description','Song IDs','Song Data','Created','Created By','Views','Status'],
-    'Templates': ['Name','Type','Subject','Body','Last Used'],
-    'Pitch Log': ['Date','Round','Pitch Type','Contact Name','Contact Email','Song Title','DISCO Link','Status','Response Date','Notes'],
-}
-
-def _ensure_sheet(sheet_name):
-    """Auto-create a sheet tab with headers if it doesn't exist. Returns True on success."""
-    try:
-        data = sheets.get_all_rows(sheet_name)
-        if data is not None:
-            return True
-    except Exception:
-        pass
-    headers = _SHEET_SCHEMAS.get(sheet_name)
-    if not headers:
-        logging.warning(f"No schema defined for sheet '{sheet_name}', cannot auto-create")
-        return False
-    try:
-        sheets.service.spreadsheets().batchUpdate(
-            spreadsheetId=sheets.spreadsheet_id,
-            body={'requests': [{'addSheet': {'properties': {'title': sheet_name}}}]}
-        ).execute()
-        sheets.service.spreadsheets().values().update(
-            spreadsheetId=sheets.spreadsheet_id, range=f"'{sheet_name}'!A1",
-            valueInputOption='USER_ENTERED', body={'values': [headers]}
-        ).execute()
-        sheets._invalidate_cache(sheet_name)
-        logging.info(f"Auto-created sheet tab: {sheet_name}")
-        return True
-    except Exception as e:
-        logging.warning(f"Failed to auto-create sheet '{sheet_name}': {e}")
-        return False
 
 # Fast name-to-record lookup cache (built once, used by pill clicks)
 NAME_CACHE = {}  # name_lower -> {table, row_index, route, name}
@@ -243,28 +222,31 @@ def cleanH(h):
     return _CLEAN_H_RE.sub('', h or '').strip()
 
 def next_system_id():
-    """Generate next universal System ID (RLN-XXXXX) across all tables."""
-    max_num = 0
-    for table_name in ['Songs', 'Personnel', 'Invoices']:
-        try:
-            data = sheets.get_all_rows(table_name)
-            if not data or len(data) < 2: continue
-            headers = data[0]
-            id_col = None
-            for i, h in enumerate(headers):
-                hl = cleanH(h).lower()
-                if hl in ('airtable id', 'system id'): id_col = i; break
-            if id_col is None: continue
-            for row in data[1:]:
-                if id_col < len(row):
-                    eid = str(row[id_col]).strip()
-                    for prefix in ('RLN-', 'SON-', 'PER-'):
-                        if eid.startswith(prefix):
-                            try: max_num = max(max_num, int(eid[len(prefix):]))
-                            except: pass
-        except: continue
-    if max_num == 0: max_num = 8000  # Start after existing Airtable records
-    return f"RLN-{max_num + 1:05d}"
+    """Generate next universal System ID (RLN-XXXXX) across all tables. Thread-safe."""
+    with _ID_LOCK:
+        max_num = 0
+        for table_name in ['Songs', 'Personnel', 'Invoices']:
+            try:
+                data = sheets.get_all_rows(table_name)
+                if not data or len(data) < 2: continue
+                headers = data[0]
+                id_col = None
+                for i, h in enumerate(headers):
+                    hl = cleanH(h).lower()
+                    if hl in ('airtable id', 'system id'): id_col = i; break
+                if id_col is None: continue
+                for row in data[1:]:
+                    if id_col < len(row):
+                        eid = str(row[id_col]).strip()
+                        for prefix in ('RLN-', 'SON-', 'PER-'):
+                            if eid.startswith(prefix):
+                                try: max_num = max(max_num, int(eid[len(prefix):]))
+                                except ValueError: pass
+            except Exception as e:
+                logging.warning(f"next_system_id scan {table_name}: {e}")
+                continue
+        if max_num == 0: max_num = 8000  # Start after existing Airtable records
+        return f"RLN-{max_num + 1:05d}"
 
 def apply_filter(rows, col_idx, op, val):
     vl = val.lower(); result = []
@@ -379,18 +361,48 @@ def build_city_lookup():
 def run_song_automations(ri, field, new_value, headers):
     results = []
     ch = cleanH(field).lower()
-    # Auto-tag BW Collab
-    if ch in ('songwriter credits','producer','artist'):
-        if 'ben wylen' in new_value.lower() or 'benjamin schneid' in new_value.lower():
-            tc = find_col(headers, 'tag')
-            if tc is not None:
-                row = sheets.get_row('Songs', ri)
-                ct = str(row[tc]).strip() if tc < len(row) else ''
-                ex = split_tags(ct)
-                if 'BW Collab' not in ex:
-                    ex.append('BW Collab')
-                    sheets.update_cell('Songs', ri, tc + 1, ' | '.join(ex))
-                    results.append('Added BW Collab tag')
+
+    # Artist/writer "Cut" tag rules: tag the song when an associated artist gets a release date
+    # Each entry: (search terms in credits, tag to apply on songs)
+    _CUT_ARTISTS = [
+        (['ben wylen', 'benjamin schneid'], 'BW Cut'),
+        (['emmma'], 'EMMMA Cut'),
+        (['isa im', 'isabella m'], 'Isa IM Cut'),
+    ]
+
+    def _check_cut_tags(row, tag_col):
+        """Check if any Cut artist tags should be applied based on credits + release date."""
+        ct = str(row[tag_col]).strip() if tag_col < len(row) else ''
+        existing_tags = split_tags(ct)
+        sc_col = find_col(headers, 'songwriter credits')
+        prod_col = find_col(headers, 'producer')
+        art_col = find_col(headers, 'artist')
+        credits_text = ''
+        for col in [sc_col, prod_col, art_col]:
+            if col is not None and col < len(row):
+                credits_text += ' ' + str(row[col]).lower()
+        rd_col = find_col(headers, 'release date')
+        has_release = False
+        if rd_col is not None and rd_col < len(row) and str(row[rd_col]).strip():
+            has_release = True
+        added = []
+        for search_terms, tag_name in _CUT_ARTISTS:
+            if tag_name in existing_tags:
+                continue
+            if any(term in credits_text for term in search_terms) and has_release:
+                existing_tags.append(tag_name)
+                added.append(tag_name)
+        if added:
+            sheets.update_cell('Songs', ri, tag_col + 1, ' | '.join(existing_tags))
+            results.extend([f'Added {t} tag' for t in added])
+
+    # When credits or release date change, check Cut tags
+    if ch in ('songwriter credits', 'producer', 'artist', 'release date'):
+        tc = find_col(headers, 'tag')
+        if tc is not None:
+            row = sheets.get_row('Songs', ri)
+            _check_cut_tags(row, tc)
+
     # Auto-update Audio Status to "Released" when Release Date is in the past
     if ch == 'release date' and new_value and new_value.strip():
         try:
@@ -398,7 +410,7 @@ def run_song_automations(ri, field, new_value, headers):
             rd = None
             for fmt in ('%Y-%m-%d','%m/%d/%Y','%m/%d/%y','%d/%m/%Y'):
                 try: rd = dt.strptime(new_value.strip(), fmt); break
-                except: pass
+                except ValueError: pass
             if rd and rd.date() <= dt.now().date():
                 sc = find_col(headers, 'audio status')
                 if sc is not None:
@@ -407,7 +419,8 @@ def run_song_automations(ri, field, new_value, headers):
                     if current_status.lower() not in ('released',):
                         sheets.update_cell('Songs', ri, sc + 1, 'Released')
                         results.append('Audio Status set to Released (release date is past)')
-        except: pass
+        except Exception as e:
+            logging.warning(f"Release date auto-status: {e}")
     # Recording City -> auto-fill Recording Country
     if ch == 'recording city' and new_value and new_value.strip():
         ci = CITY_LOOKUP.get(new_value.lower().strip(), None)
@@ -563,89 +576,15 @@ def api_dashboard_stats():
                 try:
                     from datetime import datetime as dt
                     t = dt.fromisoformat(ts)
-                    diff = (datetime.now() - t).total_seconds()
-                    if diff < 60: time_str = 'just now'
-                    elif diff < 3600: time_str = f'{int(diff/60)}m ago'
-                    elif diff < 86400: time_str = f'{int(diff/3600)}h ago'
-                    else: time_str = t.strftime('%b %d %H:%M')
+                    time_str = t.strftime('%H:%M')
                 except: pass
-            field_name = cleanH(item.get('field', ''))
-            old_v = str(item.get('old_value', ''))[:30]
-            new_v = str(item.get('new_value', ''))[:30]
-            icon = '🎵' if item.get('table') == 'Songs' else '📇'
-            text = f'{field_name}: {old_v} → {new_v}' if old_v else f'{field_name} set to {new_v}'
-            recent.append({'icon': icon, 'text': text, 'time': time_str or 'recent'})
-            if len(recent) >= 15: break
+            recent.append({
+                'icon': '🎵' if item.get('table') == 'Songs' else '📇',
+                'text': f"{cleanH(item.get('field',''))} updated",
+                'time': time_str or 'recent'
+            })
+            if len(recent) >= 10: break
         result['recent_activity'] = recent
-        # New submissions count
-        if song_rows:
-            tag_col = next((i for i, h in enumerate(sh) if cleanH(h).lower() in ('tag', 'tags')), None)
-            new_subs = 0
-            if tag_col is not None:
-                for r in song_rows[1:]:
-                    if tag_col < len(r) and 'New Submission' in str(r[tag_col]):
-                        new_subs += 1
-            result['new_submissions'] = new_subs
-        # Today's priorities
-        priorities = []
-        # Overdue follow-ups count
-        try:
-            from datetime import datetime as dt
-            now = dt.now()
-            if per_rows:
-                lo_col = find_col(ph, 'last outreach')
-                nm_col = find_col(ph, 'name')
-                if lo_col is not None and nm_col is not None:
-                    overdue_contacts = 0
-                    for r in per_rows[1:]:
-                        if lo_col < len(r) and r[lo_col]:
-                            try:
-                                lo = dt.strptime(r[lo_col].strip()[:10], '%Y-%m-%d')
-                                if (now - lo).days >= 14: overdue_contacts += 1
-                            except: pass
-                    if overdue_contacts:
-                        priorities.append({'icon': '📧', 'text': f'{overdue_contacts} contacts need follow-up', 'action': '/directory', 'urgency': 'warning'})
-            # Overdue invoices
-            try:
-                _ensure_sheet('Invoices')
-                inv_data = sheets.get_all_rows('Invoices')
-                if inv_data and len(inv_data) > 1:
-                    inv_h = inv_data[0]
-                    s_col = find_col(inv_h, 'status')
-                    d_col = find_col(inv_h, 'due date')
-                    a_col = find_col(inv_h, 'amount')
-                    overdue_total = 0
-                    overdue_count = 0
-                    for r in inv_data[1:]:
-                        st = str(r[s_col]).strip().lower() if s_col is not None and s_col < len(r) else ''
-                        if st in ('paid', 'draft'): continue
-                        if d_col is not None and d_col < len(r) and r[d_col]:
-                            try:
-                                dd = dt.strptime(r[d_col].strip()[:10], '%Y-%m-%d')
-                                if dd.date() < now.date():
-                                    overdue_count += 1
-                                    if a_col is not None and a_col < len(r):
-                                        overdue_total += float(re.sub(r'[^0-9.]', '', str(r[a_col])) or '0')
-                            except: pass
-                    if overdue_count:
-                        priorities.append({'icon': '💰', 'text': f'{overdue_count} overdue invoices (${overdue_total:,.2f})', 'action': '/invoices', 'urgency': 'danger'})
-            except: pass
-            # Upcoming releases this week
-            if song_rows and ri is not None:
-                this_week = 0
-                for r in song_rows[1:]:
-                    if ri < len(r) and r[ri]:
-                        try:
-                            rd = dt.strptime(r[ri].strip()[:10], '%Y-%m-%d')
-                            if 0 <= (rd.date() - now.date()).days <= 7: this_week += 1
-                        except: pass
-                if this_week:
-                    priorities.append({'icon': '🎵', 'text': f'{this_week} releases this week', 'action': '/calendar', 'urgency': 'info'})
-            # New submissions
-            if new_subs:
-                priorities.append({'icon': '📥', 'text': f'{new_subs} unreviewed submissions', 'action': '/songs', 'urgency': 'accent'})
-        except: pass
-        result['priorities'] = priorities
     except Exception as e:
         logging.warning(f"Dashboard stats error: {e}")
     _dash_cache['data'] = result
@@ -1155,6 +1094,68 @@ def api_songs_new():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/backfill-ids', methods=['POST'])
+@admin_required
+def api_backfill_ids():
+    """Backfill missing System IDs across all tables."""
+    fixed = 0
+    for table_name in ['Songs', 'Personnel', 'Invoices']:
+        try:
+            data = sheets.get_all_rows(table_name)
+            if not data or len(data) < 2: continue
+            headers = data[0]
+            id_col = None
+            for i, h in enumerate(headers):
+                hl = cleanH(h).lower()
+                if hl in ('airtable id', 'system id'): id_col = i; break
+            if id_col is None: continue
+            for ri, row in enumerate(data[1:], start=2):
+                cell = str(row[id_col]).strip() if id_col < len(row) else ''
+                is_valid = any(cell.startswith(p) for p in ('RLN-', 'SON-', 'PER-', 'rec'))
+                if not is_valid or not cell:
+                    new_id = next_system_id()
+                    sheets.update_cell(table_name, ri, id_col + 1, new_id)
+                    logging.info(f"Backfill ID: {table_name} row {ri} '{cell}' -> {new_id}")
+                    fixed += 1
+        except Exception as e:
+            logging.warning(f"Backfill IDs {table_name}: {e}")
+    return jsonify({'success': True, 'fixed': fixed})
+
+@app.route('/api/fix-airtable-links', methods=['POST'])
+@admin_required
+def api_fix_airtable_links():
+    """Scan for Airtable URLs in Lyric Doc fields and report/replace them.
+    POST body: {"dry_run": true} to just scan, or {"replacements": {"old_url": "new_url"}} to fix."""
+    d = request.json or {}
+    dry_run = d.get('dry_run', True)
+    replacements = d.get('replacements', {})
+    found = []
+    fixed = 0
+    try:
+        data = sheets.get_all_rows('Songs')
+        if not data or len(data) < 2:
+            return jsonify({'found': [], 'fixed': 0})
+        headers = data[0]
+        ld_col = find_col(headers, 'lyric doc', 'lyric docs', 'lyrics docs')
+        title_col = find_col(headers, 'title')
+        if ld_col is None:
+            return jsonify({'error': 'No Lyric Doc column found'}), 404
+        for ri, row in enumerate(data[1:], start=2):
+            cell = str(row[ld_col]).strip() if ld_col < len(row) else ''
+            if not cell: continue
+            if 'airtable.com' in cell.lower() or cell.startswith('rec'):
+                title = str(row[title_col]).strip() if title_col is not None and title_col < len(row) else ''
+                entry = {'row': ri, 'title': title, 'current_url': cell}
+                if not dry_run and cell in replacements:
+                    new_url = replacements[cell]
+                    sheets.update_cell('Songs', ri, ld_col + 1, new_url)
+                    entry['new_url'] = new_url
+                    fixed += 1
+                found.append(entry)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'found': found, 'fixed': fixed, 'total_airtable_links': len(found)})
+
 @app.route('/api/songs/import', methods=['POST'])
 @login_required
 def api_songs_import():
@@ -1594,11 +1595,23 @@ def invoices_page(): return render_template('invoices.html')
 @admin_required
 def api_invoices():
     try:
-        if not _ensure_sheet('Invoices'):
-            return jsonify({'headers': [], 'records': [], 'total': 0})
         data = sheets.get_all_rows('Invoices')
         if not data or len(data) < 1:
-            return jsonify({'headers': _SHEET_SCHEMAS['Invoices'], 'records': [], 'total': 0})
+            # Create Invoices sheet if it doesn't exist
+            try:
+                sheets.service.spreadsheets().batchUpdate(
+                    spreadsheetId=sheets.spreadsheet_id,
+                    body={'requests': [{'addSheet': {'properties': {'title': 'Invoices'}}}]}
+                ).execute()
+                headers_row = ['Invoice No','Date','Client','Description','Amount','Currency','Status','Due Date','Payment Date','Category','Notes']
+                sheets.service.spreadsheets().values().update(
+                    spreadsheetId=sheets.spreadsheet_id, range="'Invoices'!A1",
+                    valueInputOption='USER_ENTERED', body={'values': [headers_row]}
+                ).execute()
+                sheets._invalidate_cache('Invoices')
+                return jsonify({'headers': headers_row, 'records': [], 'total': 0})
+            except:
+                return jsonify({'headers': [], 'records': [], 'total': 0})
         headers = data[0]; rows = data[1:]
         records = []
         for i, row in enumerate(rows):
@@ -1614,7 +1627,6 @@ def api_invoices():
 @admin_required
 def api_invoice_detail(ri):
     try:
-        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         row = sheets.get_row('Invoices', ri)
         rec = {'_row_index': ri}
@@ -1629,7 +1641,6 @@ def api_invoice_detail(ri):
 def api_invoice_new():
     d = request.json
     try:
-        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         row = [''] * len(headers)
         # Auto-number if requested
@@ -1669,7 +1680,6 @@ def api_invoice_update():
     field = d.get('field', ''); ri = d.get('row_index'); value = d.get('value', '')
     if not field or not ri: return jsonify({'error': 'Missing field or row_index'}), 400
     try:
-        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         col = find_col(headers, field)
         if col is None: return jsonify({'error': f'Field not found: {field}'}), 400
@@ -1685,7 +1695,6 @@ def api_invoice_mark_paid():
     ri = d.get('row_index')
     if not ri: return jsonify({'error': 'Missing row_index'}), 400
     try:
-        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         status_col = find_col(headers, 'status')
         payment_col = find_col(headers, 'payment date')
@@ -1698,84 +1707,6 @@ def api_invoice_mark_paid():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/invoices/print/<int:ri>')
-@admin_required
-def invoice_print(ri):
-    """Print-friendly invoice page. Use browser Print > Save as PDF."""
-    try:
-        _ensure_sheet('Invoices')
-        data = sheets.get_all_rows('Invoices')
-        if not data or ri < 2 or ri > len(data): return 'Invoice not found', 404
-        headers = data[0]; row = data[ri - 1]
-        rec = {}
-        for i, h in enumerate(headers):
-            rec[cleanH(h)] = row[i] if i < len(row) else ''
-        entity = rec.get('Entity', 'ROLLON ENT').strip()
-        is_rye = 'RESTLESS' in entity.upper()
-        bank = {
-            'ROLLON ENT': {'bank': 'Bank of America', 'account': '325102552432', 'routing': '121000358', 'swift': 'BOFAUS3N'},
-            'RESTLESS YOUTH': {'bank': 'JP Morgan Chase', 'account': '588235686', 'routing': '322271627', 'swift': 'CHASUS33'}
-        }.get(entity, {'bank': '', 'account': '', 'routing': '', 'swift': ''})
-        inv_no = rec.get('Invoice No', '')
-        client = rec.get('Client', '')
-        desc = rec.get('Description', '')
-        amount = rec.get('Amount', '0')
-        currency = rec.get('Currency', 'USD')
-        status = rec.get('Status', 'Draft')
-        date = rec.get('Date', '')
-        due = rec.get('Due Date', '')
-        category = rec.get('Category', '')
-        notes = rec.get('Notes', '')
-        symbol = {'USD': '$', 'GBP': '\u00a3', 'EUR': '\u20ac', 'AUD': 'A$', 'CAD': 'C$'}.get(currency, currency + ' ')
-        html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice {inv_no}</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap');
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'DM Sans',sans-serif;color:#1a1a1a;padding:40px;max-width:800px;margin:0 auto}}
-.header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;border-bottom:3px solid #d4a853;padding-bottom:20px}}
-.brand h1{{font-size:24px;letter-spacing:3px;color:#d4a853;margin-bottom:4px}}
-.brand p{{font-size:11px;color:#888}}
-.inv-meta{{text-align:right}}
-.inv-meta h2{{font-size:18px;margin-bottom:6px}}
-.inv-meta p{{font-size:11px;color:#666;margin-bottom:2px}}
-.status{{display:inline-block;padding:3px 12px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px}}
-.status-draft{{background:#f0f0f0;color:#666}}.status-sent{{background:#dbeafe;color:#2563eb}}.status-paid{{background:#dcfce7;color:#16a34a}}.status-overdue{{background:#fee2e2;color:#dc2626}}
-.parties{{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-bottom:32px}}
-.party h3{{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#999;margin-bottom:8px}}
-.party p{{font-size:13px;line-height:1.6}}
-table{{width:100%;border-collapse:collapse;margin-bottom:32px}}
-th{{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#999;border-bottom:2px solid #e0e0e0;padding:8px 0}}
-td{{padding:12px 0;border-bottom:1px solid #f0f0f0;font-size:13px}}
-td:last-child{{text-align:right;font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600}}
-.total-row td{{border-bottom:none;border-top:2px solid #1a1a1a;font-weight:700;font-size:15px;padding-top:12px}}
-.bank{{background:#f8f8f8;border-radius:8px;padding:20px;margin-bottom:20px}}
-.bank h3{{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#999;margin-bottom:10px}}
-.bank p{{font-size:12px;line-height:1.8;color:#444}}
-.terms{{font-size:11px;color:#888;text-align:center;padding-top:20px;border-top:1px solid #e0e0e0}}
-@media print{{body{{padding:20px}}@page{{margin:1cm}}}}
-</style></head><body>
-<div class="header">
-<div class="brand"><h1>{entity}</h1><p>celina@rollonent.com | +1 747 258 5952</p></div>
-<div class="inv-meta"><h2>INVOICE</h2><p>{inv_no}</p><p>Date: {date}</p>{f'<p>Due: {due}</p>' if due else ''}<br><span class="status status-{status.lower()}">{status}</span></div>
-</div>
-<div class="parties">
-<div class="party"><h3>From</h3><p><strong>{entity}</strong><br>celina@rollonent.com<br>+1 747 258 5952</p></div>
-<div class="party"><h3>Bill To</h3><p><strong>{client}</strong></p></div>
-</div>
-<table><thead><tr><th>Description</th><th>Category</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody><tr><td>{desc}</td><td>{category}</td><td>{symbol}{amount}</td></tr>
-<tr class="total-row"><td colspan="2">Total Due</td><td>{symbol}{amount} {currency}</td></tr></tbody></table>
-<div class="bank"><h3>Payment Details</h3>
-<p>Bank: {bank['bank']}<br>Account: {bank['account']}<br>Routing: {bank['routing']}<br>SWIFT: {bank['swift']}<br>Reference: {inv_no}</p></div>
-{f'<p style="font-size:12px;color:#666;margin-bottom:16px"><strong>Notes:</strong> {notes}</p>' if notes else ''}
-<div class="terms">Payment terms: NET 14 | Late payments subject to 1.5% monthly interest<br>{entity} | celina@rollonent.com</div>
-<script>window.onload=function(){{setTimeout(function(){{window.print()}},500)}}</script>
-</body></html>"""
-        return html
-    except Exception as e:
-        return f'Error: {e}', 500
-
-
 # ==================== SONG SUBMISSION (PUBLIC, NO AUTH) ====================
 @app.route('/submit')
 def submit_form():
@@ -1783,7 +1714,7 @@ def submit_form():
 
 @app.route('/api/submit-song', methods=['POST'])
 def api_submit_song():
-    if not rate_limit_check(request.remote_addr, max_per_hour=10):
+    if not rate_limit_check(max_per_hour=30):
         return jsonify({'error': 'Too many submissions. Please try again later.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
@@ -1957,7 +1888,7 @@ def _send_confirmation_email(to_email, name, title, token, data):
 @app.route('/api/submit-edit', methods=['POST'])
 def api_submit_edit():
     """Update a previously submitted song using edit token."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=10):
+    if not rate_limit_check(max_per_hour=30):
         return jsonify({'error': 'Too many requests.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
@@ -2027,7 +1958,7 @@ def api_submit_edit():
 @app.route('/api/submit-load/<token>')
 def api_submit_load(token):
     """Load submission data for editing."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=30):
+    if not rate_limit_check(max_per_hour=60):
         return jsonify({'error': 'Too many requests.'}), 429
     if token not in _edit_tokens:
         return jsonify({'error': 'Invalid or expired edit link.'}), 400
@@ -2129,7 +2060,7 @@ def format_lyrics(text):
 @app.route('/api/public/search-names')
 def api_public_search_names():
     """Public endpoint for submission form. Returns names only, no sensitive data."""
-    if not rate_limit_check(request.remote_addr, max_per_hour=100):
+    if not rate_limit_check(max_per_hour=200):
         return jsonify({'names': []}), 429
     q = request.args.get('q', '').strip()
     if len(q) < 1: return jsonify({'names': []})
@@ -2190,7 +2121,23 @@ def api_pitch_check_duplicate():
 import uuid as _uuid
 
 def _ensure_playlists_sheet():
-    return _ensure_sheet('Playlists')
+    try:
+        data = sheets.get_all_rows('Playlists')
+        if data: return True
+    except: pass
+    try:
+        sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': 'Playlists'}}}]}
+        ).execute()
+        headers = ['ID','Name','Description','Song IDs','Song Data','Created','Created By','Views','Status']
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Playlists'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute()
+        sheets._invalidate_cache('Playlists')
+        return True
+    except: return False
 
 @app.route('/playlists')
 @login_required
@@ -2357,7 +2304,24 @@ def api_follow_ups():
 
 # ==================== EMAIL TEMPLATES (Google Sheets backed) ====================
 def _ensure_templates_sheet():
-    return _ensure_sheet('Templates')
+    """Create Templates sheet if it doesn't exist."""
+    try:
+        data = sheets.get_all_rows('Templates')
+        if data: return True
+    except: pass
+    try:
+        sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': 'Templates'}}}]}
+        ).execute()
+        headers = ['Name', 'Type', 'Subject', 'Body', 'Last Used']
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Templates'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute()
+        sheets._invalidate_cache('Templates')
+        return True
+    except: return False
 
 @app.route('/api/templates')
 @login_required

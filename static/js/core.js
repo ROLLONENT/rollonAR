@@ -1,4 +1,4 @@
-/* ROLLON AR v32e — Core JS — Google Sheets master, no Airtable */
+/* ROLLON AR v32d — Core JS — Google Sheets master, no Airtable */
 
 let TAG_COLORS={},PILL_COLORED=false;
 fetch('/api/config').then(r=>r.json()).then(d=>{TAG_COLORS=d.tag_colors||{}}).catch(()=>{});
@@ -515,18 +515,23 @@ function addChecklistItem(btn){
 function toggleChecklist(cb,idx){
   const dv=cb.closest('.detail-value');if(!dv)return;
   const field=dv.dataset.field,ri=parseInt(dv.dataset.row),table=dv.dataset.table;
-  // Fetch fresh value to avoid stale data
-  const ep=table==='songs'?`/api/songs/${ri}`:`/api/directory/${ri}`;
-  fetch(ep).then(r=>r.json()).then(rec=>{
-    const cv=rec[field]||'';
-    const items=cv.split('\n').filter(x=>x.trim());
-    if(idx<items.length){
-      const done=items[idx].startsWith('[x]')||items[idx].startsWith('[X]');
-      const text=items[idx].replace(/^\[.\]\s*/,'');
-      items[idx]=done?'[ ] '+text:'[x] '+text;
-      saveEdit(dv,field,ri,table,items.join('\n'));
+  // Optimistic: toggle UI immediately from current DOM state, save in background
+  const allItems=dv.querySelectorAll('.checklist-item');
+  const itemDiv=allItems[idx];
+  if(itemDiv){
+    const isNowChecked=cb.checked;
+    itemDiv.classList.toggle('checked',isNowChecked);
+  }
+  // Build new value from all checklist items in current DOM
+  const items=[];
+  dv.querySelectorAll('.checklist-item').forEach(el=>{
+    const cbx=el.querySelector('input[type="checkbox"]');
+    const span=el.querySelector('span[onclick*="editChecklistItem"]');
+    if(cbx&&span){
+      items.push((cbx.checked?'[x] ':'[ ] ')+span.textContent);
     }
   });
+  if(items.length) saveEdit(dv,field,ri,table,items.join('\n'));
 }
 
 function editChecklistItem(span,idx){
@@ -1324,12 +1329,6 @@ function colDragStart(e){
   _dragColName=th.dataset.colName;_dragHappened=true;
   e.dataTransfer.effectAllowed='move';
   e.dataTransfer.setData('text/plain',_dragColName);
-  // Create explicit drag image for reliable macOS drag
-  const ghost=th.cloneNode(true);
-  ghost.style.cssText='position:absolute;top:-1000px;left:-1000px;background:var(--bg-raised);border:1px solid var(--accent);border-radius:4px;padding:6px 12px;font-size:10px;opacity:.9;pointer-events:none';
-  document.body.appendChild(ghost);
-  e.dataTransfer.setDragImage(ghost,20,15);
-  setTimeout(()=>ghost.remove(),0);
   th.classList.add('dragging');
   th.style.opacity='.5';
 }
