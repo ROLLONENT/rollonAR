@@ -64,7 +64,7 @@
 {% block scripts %}
 <script>
 const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('search')||'',
-  sortFields:[],filters:[],allCols:[],visibleCols:[],headers:[],
+  sortField:'',sortDir:'asc',filters:[],allCols:[],visibleCols:[],headers:[],
   currentView:'All',views:{},group:'',groupDir:'asc',
 
   init(){
@@ -72,12 +72,12 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     setupSearchAutosuggest('search-input','songs');
     try{this.views=JSON.parse(localStorage.getItem('rollon_song_views')||'{}')}catch(e){}
     this.currentView=localStorage.getItem('rollon_song_current_view')||'All';
-    if(!this.views['All'])this.views['All']={filters:[],visibleCols:[],sorts:[],sort:'',dir:'asc'};
+    if(!this.views['All'])this.views['All']={filters:[],visibleCols:[],sort:'',dir:'asc'};
     // Load saved view state
     const saved=this.views[this.currentView];
     if(saved&&saved.visibleCols?.length)this.visibleCols=[...saved.visibleCols];
-    if(saved&&saved.sorts?.length)this.sortFields=[...saved.sorts];
-    else if(saved&&saved.sort)this.sortFields=[{col:saved.sort,dir:saved.dir||'asc'}];
+    if(saved&&saved.sort)this.sortField=saved.sort;
+    if(saved&&saved.dir)this.sortDir=saved.dir;
     if(saved&&saved.filters?.length)this.filters=[...saved.filters];
     this.renderViews();
     fetch('/api/songs/tags').then(r=>r.json()).then(d=>{
@@ -98,7 +98,8 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     this.views[this.currentView]={
       filters:[...this.filters],
       visibleCols:[...this.visibleCols],
-      sorts:[...this.sortFields],
+      sort:this.sortField,
+      dir:this.sortDir,
       group:this.group||'',
       groupDir:this.groupDir||'asc'
     };
@@ -109,7 +110,7 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
   load(){
     let url=`/api/songs?page=${this.page}&per_page=${this.perPage}`;
     if(this.search)url+=`&search=${encodeURIComponent(this.search)}`;
-    url+=sortFieldsToURL(this.sortFields);
+    if(this.sortField)url+=`&sort=${encodeURIComponent(this.sortField)}&dir=${this.sortDir}`;
     if(this.group)url+=`&group=${encodeURIComponent(this.group)}`;
     if(window._filterMode==='or')url+=`&filter_mode=or`;
     this.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
@@ -121,12 +122,14 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
         const ac=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
         this.visibleCols=ac.slice(0,10);this.allCols=ac;
       }
-      const sg=sortFieldsForGrid(this.sortFields);
-      const onSort=(field)=>{this.sortFields=[{col:field,dir:sg.field===field&&sg.dir==='asc'?'desc':'asc'}];this.load()};
       if(this.group&&d.records.length>0){
-        buildGroupedGrid('grid-wrap',d.headers,d.records,'songs',this.visibleCols,this.group,sg.field,sg.dir,onSort,this.groupDir);
+        buildGroupedGrid('grid-wrap',d.headers,d.records,'songs',this.visibleCols,this.group,this.sortField,this.sortDir,(field)=>{
+          if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
+          else{this.sortField=field;this.sortDir='asc'}this.load()},this.groupDir);
       } else {
-        buildGridV2('grid-wrap',d.headers,d.records,'songs',this.visibleCols,sg.field,sg.dir,onSort,window._selectedRows);
+        buildGridV2('grid-wrap',d.headers,d.records,'songs',this.visibleCols,this.sortField,this.sortDir,(field)=>{
+          if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
+          else{this.sortField=field;this.sortDir='asc'}this.load()},window._selectedRows);
       }
       buildPagination('pagination',d.page,d.total_pages,d.total,(p)=>{this.page=p;this.load()});
       this._autoSave();
@@ -144,13 +147,12 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
       else{bf.classList.remove('btn-active');bf.innerHTML='⊞ Filter'}
     }
     if(bs){
-      const sm=sortFieldsSummary(this.sortFields);
-      if(sm){bs.classList.add('btn-active');bs.innerHTML='\u2195 '+sm}
-      else{bs.classList.remove('btn-active');bs.innerHTML='\u2195 Sort'}
+      if(this.sortField){bs.classList.add('btn-active');bs.innerHTML='↕ '+cleanH(this.sortField)+' '+(this.sortDir==='desc'?'↓':'↑')}
+      else{bs.classList.remove('btn-active');bs.innerHTML='↕ Sort'}
     }
     if(bg){
-      if(this.group){bg.classList.add('btn-active');bg.innerHTML='\u25A6 '+this.group}
-      else{bg.classList.remove('btn-active');bg.innerHTML='\u25A6 Group'}
+      if(this.group){bg.classList.add('btn-active');bg.innerHTML='▦ '+this.group}
+      else{bg.classList.remove('btn-active');bg.innerHTML='▦ Group'}
     }
   },
 
@@ -164,9 +166,10 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
   showSortPanel(){
     const p=document.getElementById('sort-panel');p.classList.toggle('open');
     if(p.classList.contains('open')){
-      if(!this._sorts||!this._sorts.length)this._sorts=this.sortFields.length?[...this.sortFields]:[{col:'',dir:'asc'}];
+      if(!this._sorts)this._sorts=[{col:'',dir:'asc'}];
       buildSortPanelV2('sort-panel',this.allCols,this.headers,this._sorts,(sorts)=>{
-        this._sorts=sorts;this.sortFields=sorts.filter(s=>s.col);
+        this._sorts=sorts;const s=sorts.find(s=>s.col);
+        if(s){this.sortField=s.col;this.sortDir=s.dir}else{this.sortField='';this.sortDir='asc'}
         this.page=1;this.load()});
     }},
 
@@ -263,10 +266,7 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     localStorage.setItem('rollon_song_current_view',n);
     this.filters=v.filters||[];
     if(v.visibleCols?.length)this.visibleCols=[...v.visibleCols];
-    if(v.sorts?.length)this.sortFields=[...v.sorts];
-    else if(v.sort)this.sortFields=[{col:v.sort,dir:v.dir||'asc'}];
-    else this.sortFields=[];
-    this._sorts=null;
+    this.sortField=v.sort||'';this.sortDir=v.dir||'asc';
     this.group=v.group||'';this.groupDir=v.groupDir||'asc';
     this.page=1;this.renderViews();
     // Show filter panel if view has active filters
@@ -276,7 +276,7 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
 
   saveView(){showPromptModal('Save View',[{label:'View name',placeholder:'My view'}],(v)=>{
     if(!v[0])return;const n=v[0];
-    this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};
+    this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};
     this.currentView=n;localStorage.setItem('rollon_song_views',JSON.stringify(this.views));this.renderViews();toast('View saved: '+n)})},
 
   newRecord(){showPromptModal('New Song',[

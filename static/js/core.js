@@ -4,25 +4,6 @@ let TAG_COLORS={},PILL_COLORED=false;
 fetch('/api/config').then(r=>r.json()).then(d=>{TAG_COLORS=d.tag_colors||{}}).catch(()=>{});
 try{const stored=localStorage.getItem('pill_colored');if(stored!==null)PILL_COLORED=stored==='true'}catch(e){}
 
-// ---- MULTI-SORT HELPERS ----
-function sortFieldsToURL(sortFields){
-  if(!sortFields||!sortFields.length)return '';
-  // Filter to only entries with a column set
-  const active=sortFields.filter(s=>s.col);
-  if(!active.length)return '';
-  return active.map((s,i)=>`&sort${i}_field=${encodeURIComponent(s.col)}&sort${i}_dir=${s.dir||'asc'}`).join('');
-}
-function sortFieldsSummary(sortFields){
-  const active=(sortFields||[]).filter(s=>s.col);
-  if(!active.length)return null;
-  return active.map(s=>cleanH(s.col)+' '+(s.dir==='desc'?'\u2193':'\u2191')).join(', ');
-}
-function sortFieldsForGrid(sortFields){
-  // Return first active sort field/dir for grid arrow display
-  const s=(sortFields||[]).find(s=>s.col);
-  return s?{field:s.col,dir:s.dir||'asc'}:{field:'',dir:'asc'};
-}
-
 // ---- NAV HISTORY (back button) ----
 const NAV_STACK=[];
 function pushNav(ri,table){NAV_STACK.push({ri,table})}
@@ -1217,7 +1198,7 @@ function _gridSave(td,field,ri,table,value){
       clearTimeout(window._resortTimer);
       window._resortTimer=setTimeout(()=>{
         const page=typeof S!=='undefined'?S:(typeof D!=='undefined'?D:null);
-        if(page&&page.sortFields&&page.sortFields.some(s=>s.col)){page.load()}
+        if(page&&page.sortField){page.load()}
       },1500);
     }
     else{toast(d.error||'Save failed','error')}
@@ -1409,7 +1390,7 @@ function showCommandPalette(){document.querySelectorAll('.cmd-palette').forEach(
 function exportViewCSV(table){const page=table==='songs'?(typeof S!=='undefined'?S:null):(typeof D!=='undefined'?D:null);
   if(!page||!page.headers?.length){toast('No data','error');return}
   let url=(table==='songs'?'/api/songs':'/api/directory')+'?per_page=9999';
-  if(page.search)url+=`&search=${encodeURIComponent(page.search)}`;url+=sortFieldsToURL(page.sortFields);
+  if(page.search)url+=`&search=${encodeURIComponent(page.search)}`;if(page.sortField)url+=`&sort=${encodeURIComponent(page.sortField)}&dir=${page.sortDir}`;
   page.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
   toast('Preparing export...');fetch(url).then(r=>r.json()).then(d=>{if(!d.records?.length){toast('No records','error');return}
     // Use original sheet column order (like Airtable), only include visible columns
@@ -1700,8 +1681,8 @@ function createFieldWithType(table){
 function colAction(action,val){
   document.querySelectorAll('.col-menu').forEach(m=>m.remove());
   const page=typeof S!=='undefined'?S:(typeof D!=='undefined'?D:null);if(!page)return;
-  if(action==='sort_asc'){page.sortFields=[{col:val,dir:'asc'}];page.load()}
-  else if(action==='sort_desc'){page.sortFields=[{col:val,dir:'desc'}];page.load()}
+  if(action==='sort_asc'){page.sortField=val;page.sortDir='asc';page.load()}
+  else if(action==='sort_desc'){page.sortField=val;page.sortDir='desc';page.load()}
   else if(action==='move_left'){
     const vc=page.visibleCols;const cn=cleanH(val);const idx=vc.indexOf(cn);
     if(idx>0){vc.splice(idx,1);vc.splice(idx-1,0,cn);page.load();toast(cn+' moved left')}
@@ -1798,7 +1779,7 @@ function selectAllFiltered(table){
   if(!page)return;
   let url=table==='songs'?'/api/songs?per_page=9999':'/api/directory?per_page=9999';
   if(page.search)url+=`&search=${encodeURIComponent(page.search)}`;
-  url+=sortFieldsToURL(page.sortFields);
+  if(page.sortField)url+=`&sort=${encodeURIComponent(page.sortField)}&dir=${page.sortDir}`;
   page.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
   toast('Selecting all filtered records...');
   fetch(url).then(r=>r.json()).then(d=>{
@@ -2017,7 +1998,7 @@ function exportCurrentView(table){
   // Fetch all records with current filters (no pagination)
   let url=table==='songs'?'/api/songs?per_page=9999':'/api/directory?per_page=9999';
   if(page.search)url+=`&search=${encodeURIComponent(page.search)}`;
-  url+=sortFieldsToURL(page.sortFields);
+  if(page.sortField)url+=`&sort=${encodeURIComponent(page.sortField)}&dir=${page.sortDir}`;
   page.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
   toast('Preparing export...');
   fetch(url).then(r=>r.json()).then(d=>{

@@ -71,7 +71,7 @@ class PitchBuilder:
         try:
             data = self.sheets.get_all_rows('Pitch Log')
             if data: return True
-        except Exception:
+        except:
             pass
         try:
             self.sheets.service.spreadsheets().batchUpdate(
@@ -125,8 +125,7 @@ class PitchBuilder:
                 rec['_row'] = i + 2
                 results.append(rec)
             return results[-limit:]
-        except Exception as e:
-            import logging; logging.warning(f"Pitch history load: {e}")
+        except:
             return []
 
     def check_duplicates(self, contact_email, song_title=''):

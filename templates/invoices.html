@@ -29,7 +29,7 @@
 {% block scripts %}
 <script>
 const I={
-  invoices:[],headers:[],allCols:[],filters:[],sortFields:[{col:'Date',dir:'desc'}],
+  invoices:[],headers:[],allCols:[],filters:[],sortField:'Date',sortDir:'desc',
   views:{},currentView:'All',visibleCols:[],
 
   init(){
@@ -39,19 +39,17 @@ const I={
     const saved=this.views[this.currentView];
     if(saved&&saved.filters&&saved.filters.length)this.filters=[...saved.filters];
     if(saved&&saved.visibleCols&&saved.visibleCols.length)this.visibleCols=[...saved.visibleCols];
-    if(saved&&saved.sorts?.length)this.sortFields=[...saved.sorts];
-    else if(saved&&saved.sort)this.sortFields=[{col:saved.sort,dir:saved.dir||'desc'}];
     this.renderViews();this.load();
   },
 
   _autoSave(){
-    this.views[this.currentView]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};
+    this.views[this.currentView]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};
     localStorage.setItem('rollon_inv_views',JSON.stringify(this.views));
     localStorage.setItem('rollon_inv_current_view',this.currentView);
   },
 
   load(){
-    let url='/api/invoices?x=1'+sortFieldsToURL(this.sortFields);
+    let url='/api/invoices?sort='+encodeURIComponent(this.sortField)+'&dir='+this.sortDir;
     this.filters.forEach((f,i)=>{if(f.col)url+='&f'+i+'_col='+encodeURIComponent(f.col)+'&f'+i+'_op='+f.op+'&f'+i+'_val='+encodeURIComponent(f.val||'')});
     fetch(url).then(r=>r.json()).then(d=>{
       if(d.error){toast(d.error,'error');return}
@@ -60,9 +58,9 @@ const I={
       if(!this.visibleCols.length)this.visibleCols=['Invoice No','Date','Entity','Client','Description','Amount','Currency','Status','Due Date','Category'];
       document.getElementById('invoice-stats').textContent=d.total+' invoices';
       this.renderSummary(d.records);
-      const sg=sortFieldsForGrid(this.sortFields);
-      buildGridV2('grid-wrap',d.headers,d.records,'invoices',this.visibleCols,sg.field,sg.dir,(field)=>{
-        this.sortFields=[{col:field,dir:sg.field===field&&sg.dir==='asc'?'desc':'asc'}];this.load()});
+      buildGridV2('grid-wrap',d.headers,d.records,'invoices',this.visibleCols,this.sortField,this.sortDir,(field)=>{
+        if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
+        else{this.sortField=field;this.sortDir='asc'}this.load()});
       this._autoSave();this._updateToolbar();
     }).catch(()=>{document.getElementById('grid-wrap').innerHTML='<div class="loading" style="color:var(--danger)">Failed to load.</div>'});
   },
@@ -138,8 +136,8 @@ const I={
   renameView(old){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());showPromptModal('Rename',[{label:'New name',value:old}],(v)=>{if(!v[0]||v[0]===old)return;this.views[v[0]]=this.views[old];delete this.views[old];if(this.currentView===old)this.currentView=v[0];this._autoSave();this.renderViews();toast('Renamed')})},
   duplicateView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());this.views[name+' copy']=JSON.parse(JSON.stringify(this.views[name]));this._autoSave();this.renderViews();toast('Duplicated')},
   deleteView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());if(name==='All')return;delete this.views[name];if(this.currentView===name){this.currentView='All';this.loadView('All')}this._autoSave();this.renderViews();toast('Deleted')},
-  loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;localStorage.setItem('rollon_inv_current_view',n);this.filters=v.filters||[];if(v.visibleCols&&v.visibleCols.length)this.visibleCols=[...v.visibleCols];if(v.sorts?.length)this.sortFields=[...v.sorts];else if(v.sort)this.sortFields=[{col:v.sort,dir:v.dir||'desc'}];else this.sortFields=[{col:'Date',dir:'desc'}];this.renderViews();this.load()},
-  saveView(){showPromptModal('Save Invoice View',[{label:'View name',placeholder:'e.g. Overdue'}],(v)=>{if(!v[0])return;this.views[v[0]]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};this.currentView=v[0];this._autoSave();this.renderViews();toast('Saved: '+v[0])})},
+  loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;localStorage.setItem('rollon_inv_current_view',n);this.filters=v.filters||[];if(v.visibleCols&&v.visibleCols.length)this.visibleCols=[...v.visibleCols];this.sortField=v.sort||'Date';this.sortDir=v.dir||'desc';this.renderViews();this.load()},
+  saveView(){showPromptModal('Save Invoice View',[{label:'View name',placeholder:'e.g. Overdue'}],(v)=>{if(!v[0])return;this.views[v[0]]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};this.currentView=v[0];this._autoSave();this.renderViews();toast('Saved: '+v[0])})},
 
   exportCSV(){
     if(!this.invoices.length){toast('No invoices','error');return}

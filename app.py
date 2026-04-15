@@ -45,36 +45,8 @@ def _log_slow(response):
     return response
 
 GOOGLE_SHEET_ID = os.environ.get('ROLLON_SHEET_ID', '17b7HjbfXkV5w_Q8lRuG3Ae_7hwJ0M9F7ODVIFytBBmY')
-
-# Passwords: load from .env file or environment variables (never hardcoded)
-_ENV_FILE = os.path.join(os.path.dirname(__file__), '.env')
-def _load_env_file():
-    """Load key=value pairs from .env file into os.environ."""
-    if os.path.exists(_ENV_FILE):
-        with open(_ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    k, v = line.split('=', 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-_load_env_file()
-
-def _require_password(env_key, label):
-    """Get password from env, or prompt interactively and save to .env on first run."""
-    val = os.environ.get(env_key, '')
-    if val:
-        return val
-    import getpass
-    val = getpass.getpass(f"Set {label} (env {env_key}): ")
-    if not val:
-        raise SystemExit(f"ERROR: {env_key} is required. Set it in .env or as an environment variable.")
-    with open(_ENV_FILE, 'a') as f:
-        f.write(f"\n{env_key}={val}\n")
-    os.environ[env_key] = val
-    return val
-
-APP_PASSWORD = _require_password('ROLLON_PASSWORD', 'admin password')
-ASSISTANT_PASSWORD = _require_password('ROLLON_ASSISTANT_PW', 'assistant password')
+APP_PASSWORD = os.environ.get('ROLLON_PASSWORD', 'rollon2026')
+ASSISTANT_PASSWORD = os.environ.get('ROLLON_ASSISTANT_PW', 'assistant2026')
 
 # Roles: 'admin' = full access (Celina), 'assistant' = no invoices
 ROLE_PAGES = {
@@ -84,126 +56,25 @@ ROLE_PAGES = {
 
 # Simple rate limiter for public endpoints (per IP)
 _submit_times = {}
-_submit_times_lock = threading.Lock()
-
-def _get_client_ip():
-    """Get real client IP, respecting X-Forwarded-For behind proxy."""
-    forwarded = request.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
-    return request.remote_addr
-
-def rate_limit_check(ip=None, max_per_hour=10):
-    if ip is None:
-        ip = _get_client_ip()
+def rate_limit_check(ip, max_per_hour=10):
     now = time.time()
-    with _submit_times_lock:
-        times = _submit_times.get(ip, [])
-        times = [t for t in times if now - t < 3600]
-        if len(times) >= max_per_hour: return False
-        times.append(now)
-        _submit_times[ip] = times
+    times = _submit_times.get(ip, [])
+    times = [t for t in times if now - t < 3600]
+    if len(times) >= max_per_hour: return False
+    times.append(now)
+    _submit_times[ip] = times
     return True
 
-def _cleanup_rate_limits():
-    """Remove stale rate limit entries older than 1 hour."""
-    now = time.time()
-    with _submit_times_lock:
-        stale = [ip for ip, times in _submit_times.items()
-                 if not any(now - t < 3600 for t in times)]
-        for ip in stale:
-            del _submit_times[ip]
-
 # Edit tokens for submission corrections (token -> {row_index, data, expires})
-# Persisted to file so tokens survive server restarts
 import secrets
-
-_EDIT_TOKENS_FILE = os.path.join(os.path.dirname(__file__), '.edit_tokens.json')
-_edit_tokens_lock = threading.Lock()
-
-def _load_edit_tokens():
-    """Load edit tokens from file, discarding expired entries."""
-    if not os.path.exists(_EDIT_TOKENS_FILE):
-        return {}
-    try:
-        with open(_EDIT_TOKENS_FILE, 'r') as f:
-            tokens = json.load(f)
-        now = time.time()
-        return {k: v for k, v in tokens.items() if v.get('expires', 0) > now}
-    except (json.JSONDecodeError, IOError) as e:
-        logging.warning(f"Failed to load edit tokens: {e}")
-        return {}
-
-def _save_edit_tokens():
-    """Persist current edit tokens to file (call while holding lock)."""
-    try:
-        with open(_EDIT_TOKENS_FILE, 'w') as f:
-            json.dump(_edit_tokens, f)
-    except IOError as e:
-        logging.warning(f"Failed to save edit tokens: {e}")
-
-_edit_tokens = _load_edit_tokens()
-
-def _cleanup_edit_tokens():
-    """Remove expired edit tokens and save."""
-    now = time.time()
-    with _edit_tokens_lock:
-        expired = [k for k, v in _edit_tokens.items() if v.get('expires', 0) <= now]
-        for k in expired:
-            del _edit_tokens[k]
-        if expired:
-            _save_edit_tokens()
-
-# Batched playlist view counter (flush to Sheets periodically, not on every page load)
-_playlist_views = {}  # pid -> pending_count
-_playlist_views_lock = threading.Lock()
-
-def _flush_playlist_views():
-    """Flush buffered playlist view counts to Google Sheets."""
-    with _playlist_views_lock:
-        pending = dict(_playlist_views)
-        _playlist_views.clear()
-    if not pending:
-        return
-    try:
-        data = sheets.get_all_rows('Playlists')
-        if not data or len(data) < 2:
-            return
-        headers = data[0]; rows = data[1:]
-        id_col = find_col(headers, 'id')
-        views_col = find_col(headers, 'views')
-        if id_col is None or views_col is None:
-            return
-        for i, row in enumerate(rows):
-            pid = row[id_col] if id_col < len(row) else ''
-            if pid in pending:
-                current = int(row[views_col] if views_col < len(row) and row[views_col] else '0')
-                sheets.update_cell('Playlists', i + 2, views_col + 1, str(current + pending[pid]))
-        sheets._invalidate_cache('Playlists')
-    except Exception as e:
-        logging.warning(f"Failed to flush playlist views: {e}")
-
-# Periodic cleanup timer (runs every 60s)
-def _periodic_cleanup():
-    """Run cleanup tasks periodically."""
-    while True:
-        time.sleep(60)
-        try:
-            _cleanup_rate_limits()
-            _cleanup_edit_tokens()
-            _flush_playlist_views()
-        except Exception as e:
-            logging.warning(f"Periodic cleanup error: {e}")
-
-_cleanup_thread = threading.Thread(target=_periodic_cleanup, daemon=True)
-_cleanup_thread.start()
+_edit_tokens = {}
 
 # SMTP config for confirmation emails
 SMTP_HOST = os.environ.get('ROLLON_SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('ROLLON_SMTP_PORT', '587'))
-SMTP_USER = os.environ.get('ROLLON_SMTP_USER', '')
+SMTP_USER = os.environ.get('ROLLON_SMTP_USER', 'celina@rollonent.com')
 SMTP_PASS = os.environ.get('ROLLON_SMTP_PASS', '')
-SMTP_FROM = os.environ.get('ROLLON_SMTP_FROM', SMTP_USER)
+SMTP_FROM = 'celina@rollonent.com'
 
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), "token.json")
@@ -224,6 +95,42 @@ sheets = SheetsManager(GOOGLE_SHEET_ID, CREDENTIALS_PATH, TOKEN_PATH)
 pitch_builder = PitchBuilder(sheets)
 split_calc = PubSplitCalculator(sheets)
 resolver = IDResolver(sheets)
+
+# ==================== AUTO-CREATE MISSING SHEET TABS ====================
+_SHEET_SCHEMAS = {
+    'Invoices': ['Invoice No','Date','Client','Description','Amount','Currency','Status','Due Date','Payment Date','Category','Notes'],
+    'Playlists': ['ID','Name','Description','Song IDs','Song Data','Created','Created By','Views','Status'],
+    'Templates': ['Name','Type','Subject','Body','Last Used'],
+    'Pitch Log': ['Date','Round','Pitch Type','Contact Name','Contact Email','Song Title','DISCO Link','Status','Response Date','Notes'],
+}
+
+def _ensure_sheet(sheet_name):
+    """Auto-create a sheet tab with headers if it doesn't exist. Returns True on success."""
+    try:
+        data = sheets.get_all_rows(sheet_name)
+        if data is not None:
+            return True
+    except Exception:
+        pass
+    headers = _SHEET_SCHEMAS.get(sheet_name)
+    if not headers:
+        logging.warning(f"No schema defined for sheet '{sheet_name}', cannot auto-create")
+        return False
+    try:
+        sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': sheet_name}}}]}
+        ).execute()
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range=f"'{sheet_name}'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute()
+        sheets._invalidate_cache(sheet_name)
+        logging.info(f"Auto-created sheet tab: {sheet_name}")
+        return True
+    except Exception as e:
+        logging.warning(f"Failed to auto-create sheet '{sheet_name}': {e}")
+        return False
 
 # Fast name-to-record lookup cache (built once, used by pill clicks)
 NAME_CACHE = {}  # name_lower -> {table, row_index, route, name}
@@ -247,8 +154,7 @@ def build_name_cache():
                 if nc < len(row) and row[nc].strip():
                     name = row[nc].strip()
                     cache[name.lower()] = {'table': table_name, 'row_index': i + 2, 'route': route, 'name': name}
-        except Exception as e:
-            logging.warning(f"Name cache build {table_name}: {e}")
+        except: pass
     # Also index supporting tables for peek modals
     try:
         tabs = sheets.list_sheets()
@@ -267,10 +173,8 @@ def build_name_cache():
                         nl = name.lower()
                         if nl not in cache:  # Songs/Personnel take priority
                             cache[nl] = {'table': table_name, 'row_index': i + 2, 'route': 'peek', 'name': name}
-            except Exception as e:
-                logging.warning(f"Name cache peek {table_name}: {e}")
-    except Exception as e:
-        logging.warning(f"Name cache supporting tables: {e}")
+            except: pass
+    except: pass
     with NAME_CACHE_LOCK:
         NAME_CACHE = cache
     print(f"  Name cache: {len(cache)} entries")
@@ -338,34 +242,29 @@ _CLEAN_H_RE = re.compile(r'\[✓\]\s*|\[✗\]\s*|\[\?\?\]\s*|\[∅\]\s*|\[\s*✓
 def cleanH(h):
     return _CLEAN_H_RE.sub('', h or '').strip()
 
-_ID_LOCK = threading.Lock()
-
 def next_system_id():
-    """Generate next universal System ID (RLN-XXXXX) across all tables. Thread-safe."""
-    with _ID_LOCK:
-        max_num = 0
-        for table_name in ['Songs', 'Personnel', 'Invoices']:
-            try:
-                data = sheets.get_all_rows(table_name)
-                if not data or len(data) < 2: continue
-                headers = data[0]
-                id_col = None
-                for i, h in enumerate(headers):
-                    hl = cleanH(h).lower()
-                    if hl in ('airtable id', 'system id'): id_col = i; break
-                if id_col is None: continue
-                for row in data[1:]:
-                    if id_col < len(row):
-                        eid = str(row[id_col]).strip()
-                        for prefix in ('RLN-', 'SON-', 'PER-'):
-                            if eid.startswith(prefix):
-                                try: max_num = max(max_num, int(eid[len(prefix):]))
-                                except ValueError: pass
-            except Exception as e:
-                logging.warning(f"next_system_id scan {table_name}: {e}")
-                continue
-        if max_num == 0: max_num = 8000  # Start after existing Airtable records
-        return f"RLN-{max_num + 1:05d}"
+    """Generate next universal System ID (RLN-XXXXX) across all tables."""
+    max_num = 0
+    for table_name in ['Songs', 'Personnel', 'Invoices']:
+        try:
+            data = sheets.get_all_rows(table_name)
+            if not data or len(data) < 2: continue
+            headers = data[0]
+            id_col = None
+            for i, h in enumerate(headers):
+                hl = cleanH(h).lower()
+                if hl in ('airtable id', 'system id'): id_col = i; break
+            if id_col is None: continue
+            for row in data[1:]:
+                if id_col < len(row):
+                    eid = str(row[id_col]).strip()
+                    for prefix in ('RLN-', 'SON-', 'PER-'):
+                        if eid.startswith(prefix):
+                            try: max_num = max(max_num, int(eid[len(prefix):]))
+                            except: pass
+        except: continue
+    if max_num == 0: max_num = 8000  # Start after existing Airtable records
+    return f"RLN-{max_num + 1:05d}"
 
 def apply_filter(rows, col_idx, op, val):
     vl = val.lower(); result = []
@@ -401,17 +300,17 @@ def apply_filter(rows, col_idx, op, val):
                 cell_date = None
                 for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d/%m/%Y', '%Y-%m-%dT%H:%M'):
                     try: cell_date = dt.strptime(cell, fmt); break
-                    except ValueError: pass
+                    except: pass
                 val_date = None
                 for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
                     try: val_date = dt.strptime(vl, fmt); break
-                    except ValueError: pass
+                    except: pass
                 if cell_date and val_date:
                     if op == 'is_before': m = cell_date < val_date
                     elif op == 'is_after': m = cell_date > val_date
                     elif op == 'is_on_or_before': m = cell_date <= val_date
                     elif op == 'is_on_or_after': m = cell_date >= val_date
-            except (ValueError, TypeError): pass
+            except: pass
         else: m = vl in cell
         if m: result.append((ri, r))
     return result
@@ -424,45 +323,6 @@ def find_col(headers, *terms):
         for i, h in enumerate(headers):
             if tl in cleanH(h).lower(): return i
     return None
-
-def parse_sort_fields(args):
-    """Parse multi-level sort from query params. Supports:
-    - sort0_field=X&sort0_dir=asc&sort1_field=Y&sort1_dir=desc (new multi-sort)
-    - sort=X&dir=asc (legacy single-sort, backward compatible)
-    Returns list of (field_name, direction) tuples."""
-    sorts = []
-    for i in range(5):  # max 5 sort levels
-        field = args.get(f'sort{i}_field', '').strip()
-        direction = args.get(f'sort{i}_dir', 'asc').strip()
-        if field:
-            sorts.append((field, direction))
-    if not sorts:
-        # Legacy single-sort fallback
-        field = args.get('sort', '').strip()
-        if field:
-            sorts.append((field, args.get('dir', 'asc').strip()))
-    return sorts
-
-def apply_multi_sort(rows, headers, sort_fields):
-    """Apply multi-level sort using key tuples. sort_fields is [(field, dir), ...]."""
-    if not sort_fields:
-        return rows
-    # Resolve column indices
-    sort_specs = []
-    for field, direction in sort_fields:
-        si = None
-        for j, h in enumerate(headers):
-            if h == field or cleanH(h) == field:
-                si = j; break
-        if si is not None:
-            sort_specs.append((si, direction == 'desc'))
-    if not sort_specs:
-        return rows
-    # Build composite key: use tuple of (value, value, ...) with sign flipping for desc
-    # Python's sort is stable, so we sort by last key first, then second-to-last, etc.
-    for si, reverse in reversed(sort_specs):
-        rows.sort(key=lambda t: str(t[1][si]).lower() if si < len(t[1]) else '', reverse=reverse)
-    return rows
 
 def gv(row, headers, *terms):
     idx = find_col(headers, *terms)
@@ -538,7 +398,7 @@ def run_song_automations(ri, field, new_value, headers):
             rd = None
             for fmt in ('%Y-%m-%d','%m/%d/%Y','%m/%d/%y','%d/%m/%Y'):
                 try: rd = dt.strptime(new_value.strip(), fmt); break
-                except ValueError: pass
+                except: pass
             if rd and rd.date() <= dt.now().date():
                 sc = find_col(headers, 'audio status')
                 if sc is not None:
@@ -547,8 +407,7 @@ def run_song_automations(ri, field, new_value, headers):
                     if current_status.lower() not in ('released',):
                         sheets.update_cell('Songs', ri, sc + 1, 'Released')
                         results.append('Audio Status set to Released (release date is past)')
-        except Exception as e:
-            logging.warning(f"Release date auto-status: {e}")
+        except: pass
     # Recording City -> auto-fill Recording Country
     if ch == 'recording city' and new_value and new_value.strip():
         ci = CITY_LOOKUP.get(new_value.lower().strip(), None)
@@ -656,11 +515,11 @@ def api_dashboard_stats():
                             rd = None
                             for fmt in ('%Y-%m-%d','%m/%d/%Y','%d/%m/%Y'):
                                 try: rd = dt.strptime(r[ri].strip(), fmt); break
-                                except ValueError: pass
+                                except: pass
                             if rd and now <= rd <= now + timedelta(days=60):
                                 title = r[ti].strip() if ti and ti < len(r) else 'Untitled'
                                 upcoming.append({'title': title, 'date': rd.strftime('%b %d'), 'days': (rd - now).days})
-                        except (ValueError, TypeError): pass
+                        except: pass
                 upcoming.sort(key=lambda x: x['days'])
                 result['upcoming_releases'] = upcoming[:10]
             # Recently modified songs
@@ -709,7 +568,7 @@ def api_dashboard_stats():
                     elif diff < 3600: time_str = f'{int(diff/60)}m ago'
                     elif diff < 86400: time_str = f'{int(diff/3600)}h ago'
                     else: time_str = t.strftime('%b %d %H:%M')
-                except (ValueError, TypeError): pass
+                except: pass
             field_name = cleanH(item.get('field', ''))
             old_v = str(item.get('old_value', ''))[:30]
             new_v = str(item.get('new_value', ''))[:30]
@@ -743,11 +602,12 @@ def api_dashboard_stats():
                             try:
                                 lo = dt.strptime(r[lo_col].strip()[:10], '%Y-%m-%d')
                                 if (now - lo).days >= 14: overdue_contacts += 1
-                            except ValueError: pass
+                            except: pass
                     if overdue_contacts:
                         priorities.append({'icon': '📧', 'text': f'{overdue_contacts} contacts need follow-up', 'action': '/directory', 'urgency': 'warning'})
             # Overdue invoices
             try:
+                _ensure_sheet('Invoices')
                 inv_data = sheets.get_all_rows('Invoices')
                 if inv_data and len(inv_data) > 1:
                     inv_h = inv_data[0]
@@ -766,11 +626,10 @@ def api_dashboard_stats():
                                     overdue_count += 1
                                     if a_col is not None and a_col < len(r):
                                         overdue_total += float(re.sub(r'[^0-9.]', '', str(r[a_col])) or '0')
-                            except (ValueError, TypeError): pass
+                            except: pass
                     if overdue_count:
                         priorities.append({'icon': '💰', 'text': f'{overdue_count} overdue invoices (${overdue_total:,.2f})', 'action': '/invoices', 'urgency': 'danger'})
-            except Exception as e:
-                logging.warning(f"Dashboard invoices: {e}")
+            except: pass
             # Upcoming releases this week
             if song_rows and ri is not None:
                 this_week = 0
@@ -779,14 +638,13 @@ def api_dashboard_stats():
                         try:
                             rd = dt.strptime(r[ri].strip()[:10], '%Y-%m-%d')
                             if 0 <= (rd.date() - now.date()).days <= 7: this_week += 1
-                        except ValueError: pass
+                        except: pass
                 if this_week:
                     priorities.append({'icon': '🎵', 'text': f'{this_week} releases this week', 'action': '/calendar', 'urgency': 'info'})
             # New submissions
             if new_subs:
                 priorities.append({'icon': '📥', 'text': f'{new_subs} unreviewed submissions', 'action': '/songs', 'urgency': 'accent'})
-        except Exception as e:
-            logging.warning(f"Dashboard priorities: {e}")
+        except: pass
         result['priorities'] = priorities
     except Exception as e:
         logging.warning(f"Dashboard stats error: {e}")
@@ -832,9 +690,7 @@ def api_search_record():
                         starts_results.append({'name':val,'table':table_name,'row_index':i+2,'route':route})
                     elif ql in vl:
                         contains_results.append({'name':val,'table':table_name,'row_index':i+2,'route':route})
-        except Exception as e:
-            logging.warning(f"Search scan {table_name}: {e}")
-            continue
+        except: continue
     starts_results.sort(key=lambda r: (0 if r['name'].lower().startswith(ql) else 1, r['name'].lower()))
     contains_results.sort(key=lambda r: r['name'].lower())
     results = starts_results[:15]
@@ -1004,8 +860,7 @@ def api_cities_search():
                         if name and q in name.lower():
                             info = CITY_LOOKUP.get(name.lower(), {})
                             results.append({'name': name, 'country': info.get('country', ''), 'timezone': info.get('timezone', '')})
-    except Exception as e:
-        logging.warning(f"City search: {e}")
+    except: pass
     # Also search from Personnel cities
     for city_name, info in CITY_LOOKUP.items():
         if q in city_name and not any(r['name'].lower() == city_name for r in results):
@@ -1061,7 +916,8 @@ def api_songs():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
     search = request.args.get('search', '').strip()
-    sort_fields = parse_sort_fields(request.args)
+    sort_field = request.args.get('sort', '')
+    sort_dir = request.args.get('dir', 'asc')
     group_by = request.args.get('group', '').strip()
     adv_filters = []
     for i in range(20):
@@ -1101,7 +957,12 @@ def api_songs():
                             ci=j; break
                     if ci is None: continue
                     rows = apply_filter(rows, ci, f['op'], f['val'])
-        rows = apply_multi_sort(rows, headers, sort_fields)
+        if sort_field:
+            si = None
+            for j,h in enumerate(headers):
+                if h==sort_field or cleanH(h)==sort_field: si=j; break
+            if si is not None:
+                rows.sort(key=lambda t: str(t[1][si]).lower() if si<len(t[1]) else '', reverse=(sort_dir=='desc'))
         groups = None
         if group_by:
             gi = None
@@ -1338,7 +1199,8 @@ def api_directory():
     page = request.args.get('page',1,type=int)
     per_page = request.args.get('per_page',50,type=int)
     search = request.args.get('search','').strip()
-    sort_fields = parse_sort_fields(request.args)
+    sort_field = request.args.get('sort','')
+    sort_dir = request.args.get('dir','asc')
     group_by = request.args.get('group','').strip()
     adv_filters = []
     for i in range(20):
@@ -1376,7 +1238,12 @@ def api_directory():
                             ci=j; break
                     if ci is None: continue
                     rows = apply_filter(rows, ci, f['op'], f['val'])
-        rows = apply_multi_sort(rows, headers, sort_fields)
+        if sort_field:
+            si=None
+            for j,h in enumerate(headers):
+                if h==sort_field or cleanH(h)==sort_field: si=j; break
+            if si is not None:
+                rows.sort(key=lambda t: str(t[1][si]).lower() if si<len(t[1]) else '', reverse=(sort_dir=='desc'))
         groups=None
         if group_by:
             gi=None
@@ -1727,24 +1594,11 @@ def invoices_page(): return render_template('invoices.html')
 @admin_required
 def api_invoices():
     try:
+        if not _ensure_sheet('Invoices'):
+            return jsonify({'headers': [], 'records': [], 'total': 0})
         data = sheets.get_all_rows('Invoices')
         if not data or len(data) < 1:
-            # Create Invoices sheet if it doesn't exist
-            try:
-                sheets.service.spreadsheets().batchUpdate(
-                    spreadsheetId=sheets.spreadsheet_id,
-                    body={'requests': [{'addSheet': {'properties': {'title': 'Invoices'}}}]}
-                ).execute()
-                headers_row = ['Invoice No','Date','Client','Description','Amount','Currency','Status','Due Date','Payment Date','Category','Notes']
-                sheets.service.spreadsheets().values().update(
-                    spreadsheetId=sheets.spreadsheet_id, range="'Invoices'!A1",
-                    valueInputOption='USER_ENTERED', body={'values': [headers_row]}
-                ).execute()
-                sheets._invalidate_cache('Invoices')
-                return jsonify({'headers': headers_row, 'records': [], 'total': 0})
-            except Exception as e:
-                logging.warning(f"Failed to create Invoices sheet: {e}")
-                return jsonify({'headers': [], 'records': [], 'total': 0})
+            return jsonify({'headers': _SHEET_SCHEMAS['Invoices'], 'records': [], 'total': 0})
         headers = data[0]; rows = data[1:]
         records = []
         for i, row in enumerate(rows):
@@ -1760,6 +1614,7 @@ def api_invoices():
 @admin_required
 def api_invoice_detail(ri):
     try:
+        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         row = sheets.get_row('Invoices', ri)
         rec = {'_row_index': ri}
@@ -1774,6 +1629,7 @@ def api_invoice_detail(ri):
 def api_invoice_new():
     d = request.json
     try:
+        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         row = [''] * len(headers)
         # Auto-number if requested
@@ -1788,7 +1644,7 @@ def api_invoice_new():
                         num_str = ''.join(c for c in str(r[inv_col]) if c.isdigit())
                         if num_str:
                             try: max_num = max(max_num, int(num_str))
-                            except ValueError: pass
+                            except: pass
             inv_no = prefix + str(max_num + 1)
             d['Invoice No'] = inv_no
         # Due date auto-calc (14 days from today)
@@ -1813,6 +1669,7 @@ def api_invoice_update():
     field = d.get('field', ''); ri = d.get('row_index'); value = d.get('value', '')
     if not field or not ri: return jsonify({'error': 'Missing field or row_index'}), 400
     try:
+        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         col = find_col(headers, field)
         if col is None: return jsonify({'error': f'Field not found: {field}'}), 400
@@ -1828,6 +1685,7 @@ def api_invoice_mark_paid():
     ri = d.get('row_index')
     if not ri: return jsonify({'error': 'Missing row_index'}), 400
     try:
+        _ensure_sheet('Invoices')
         headers = sheets.get_headers('Invoices')
         status_col = find_col(headers, 'status')
         payment_col = find_col(headers, 'payment date')
@@ -1845,6 +1703,7 @@ def api_invoice_mark_paid():
 def invoice_print(ri):
     """Print-friendly invoice page. Use browser Print > Save as PDF."""
     try:
+        _ensure_sheet('Invoices')
         data = sheets.get_all_rows('Invoices')
         if not data or ri < 2 or ri > len(data): return 'Invoice not found', 404
         headers = data[0]; row = data[ri - 1]
@@ -1924,7 +1783,7 @@ def submit_form():
 
 @app.route('/api/submit-song', methods=['POST'])
 def api_submit_song():
-    if not rate_limit_check(max_per_hour=10):
+    if not rate_limit_check(request.remote_addr, max_per_hour=10):
         return jsonify({'error': 'Too many submissions. Please try again later.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
@@ -1933,8 +1792,6 @@ def api_submit_song():
     submitter = d.get('submitter_name', '').strip()
     email = d.get('submitter_email', '').strip()
     if not submitter or not email: return jsonify({'error': 'Name and email required'}), 400
-    if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
-        return jsonify({'error': 'Invalid email format'}), 400
     try:
         headers = sheets.get_headers('Songs')
         row = [''] * len(headers)
@@ -2023,20 +1880,18 @@ def api_submit_song():
                 logging.warning(f"Failed to auto-create Personnel: {pe}")
         # Rebuild name cache to include new records (synchronous)
         try: build_name_cache()
-        except Exception as e: logging.warning(f"Name cache rebuild after submit: {e}")
+        except: pass
         logging.info(f"Song submitted: {title} by {submitter} ({email})")
-        # Generate edit token (24h expiry), persisted to file
+        # Generate edit token (24h expiry)
         token = secrets.token_urlsafe(32)
-        with _edit_tokens_lock:
-            _edit_tokens[token] = {
-                'row_index': sheets.get_row_count('Songs') + 1,  # last row
-                'data': d,
-                'title': title,
-                'email': email,
-                'submitter': submitter,
-                'expires': time.time() + 86400  # 24 hours
-            }
-            _save_edit_tokens()
+        _edit_tokens[token] = {
+            'row_index': sheets.get_row_count('Songs') + 1,  # last row
+            'data': d,
+            'title': title,
+            'email': email,
+            'submitter': submitter,
+            'expires': time.time() + 86400  # 24 hours
+        }
         # Send confirmation email (non-blocking, best effort)
         try:
             if SMTP_USER and SMTP_PASS:
@@ -2102,24 +1957,19 @@ def _send_confirmation_email(to_email, name, title, token, data):
 @app.route('/api/submit-edit', methods=['POST'])
 def api_submit_edit():
     """Update a previously submitted song using edit token."""
-    if not rate_limit_check(max_per_hour=10):
+    if not rate_limit_check(request.remote_addr, max_per_hour=10):
         return jsonify({'error': 'Too many requests.'}), 429
     d = request.json
     if not d: return jsonify({'error': 'No data'}), 400
     token = d.get('edit_token', '').strip()
-    with _edit_tokens_lock:
-        if not token or token not in _edit_tokens:
-            return jsonify({'error': 'Invalid or expired edit link.'}), 400
-        tok = _edit_tokens[token]
-        if time.time() > tok['expires']:
-            del _edit_tokens[token]
-            _save_edit_tokens()
-            return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
+    if not token or token not in _edit_tokens:
+        return jsonify({'error': 'Invalid or expired edit link.'}), 400
+    tok = _edit_tokens[token]
+    if time.time() > tok['expires']:
+        del _edit_tokens[token]
+        return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
     title = d.get('title', '').strip()
     if not title: return jsonify({'error': 'Title is required'}), 400
-    email = d.get('submitter_email', '').strip()
-    if email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
-        return jsonify({'error': 'Invalid email format'}), 400
     try:
         headers = sheets.get_headers('Songs')
         ri = tok['row_index']
@@ -2166,9 +2016,7 @@ def api_submit_edit():
             sheets.update_cell('Songs', ri, lm_col + 1, datetime.now().strftime('%Y-%m-%d %H:%M'))
         sheets._invalidate_cache('Songs')
         # Keep token valid for remaining time (they might need another edit)
-        with _edit_tokens_lock:
-            tok['data'] = d
-            _save_edit_tokens()
+        tok['data'] = d
         logging.info(f"Song edited via token: {title} by {submitter}")
         return jsonify({'success': True, 'title': title, 'edited': True})
     except Exception as e:
@@ -2179,18 +2027,16 @@ def api_submit_edit():
 @app.route('/api/submit-load/<token>')
 def api_submit_load(token):
     """Load submission data for editing."""
-    if not rate_limit_check(max_per_hour=30):
+    if not rate_limit_check(request.remote_addr, max_per_hour=30):
         return jsonify({'error': 'Too many requests.'}), 429
-    with _edit_tokens_lock:
-        if token not in _edit_tokens:
-            return jsonify({'error': 'Invalid or expired edit link.'}), 400
-        tok = _edit_tokens[token]
-        if time.time() > tok['expires']:
-            del _edit_tokens[token]
-            _save_edit_tokens()
-            return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
-        d = tok['data']
-        remaining = int((tok['expires'] - time.time()) / 60)
+    if token not in _edit_tokens:
+        return jsonify({'error': 'Invalid or expired edit link.'}), 400
+    tok = _edit_tokens[token]
+    if time.time() > tok['expires']:
+        del _edit_tokens[token]
+        return jsonify({'error': 'Edit link has expired (24 hour limit).'}), 400
+    d = tok['data']
+    remaining = int((tok['expires'] - time.time()) / 60)
     return jsonify({'success': True, 'data': d, 'title': tok['title'], 'minutes_remaining': remaining})
 
 def format_lyrics(text):
@@ -2283,7 +2129,7 @@ def format_lyrics(text):
 @app.route('/api/public/search-names')
 def api_public_search_names():
     """Public endpoint for submission form. Returns names only, no sensitive data."""
-    if not rate_limit_check(max_per_hour=100):
+    if not rate_limit_check(request.remote_addr, max_per_hour=100):
         return jsonify({'names': []}), 429
     q = request.args.get('q', '').strip()
     if len(q) < 1: return jsonify({'names': []})
@@ -2344,26 +2190,7 @@ def api_pitch_check_duplicate():
 import uuid as _uuid
 
 def _ensure_playlists_sheet():
-    try:
-        data = sheets.get_all_rows('Playlists')
-        if data: return True
-    except Exception:
-        pass
-    try:
-        sheets.service.spreadsheets().batchUpdate(
-            spreadsheetId=sheets.spreadsheet_id,
-            body={'requests': [{'addSheet': {'properties': {'title': 'Playlists'}}}]}
-        ).execute()
-        headers = ['ID','Name','Description','Song IDs','Song Data','Created','Created By','Views','Status']
-        sheets.service.spreadsheets().values().update(
-            spreadsheetId=sheets.spreadsheet_id, range="'Playlists'!A1",
-            valueInputOption='USER_ENTERED', body={'values': [headers]}
-        ).execute()
-        sheets._invalidate_cache('Playlists')
-        return True
-    except Exception as e:
-        logging.warning(f"Failed to create Playlists sheet: {e}")
-        return False
+    return _ensure_sheet('Playlists')
 
 @app.route('/playlists')
 @login_required
@@ -2408,8 +2235,7 @@ def api_playlists_create():
                     val = row[j] if j < len(row) else ''
                     rec[cleanH(h)] = resolver.resolve_value(h, val) if resolver else val
                 song_data.append(rec)
-            except Exception as e:
-                logging.warning(f"Playlist song load row {ri}: {e}")
+            except: pass
         pid = 'PLY-' + _uuid.uuid4().hex[:8].upper()
         new_row = [
             pid, name, d.get('description', ''),
@@ -2460,23 +2286,20 @@ def public_playlist(pid):
                 rec = {}
                 for j, h in enumerate(headers):
                     rec[h] = row[j] if j < len(row) else ''
-                # Increment views (batched, flushed every 60s by cleanup thread)
+                # Increment views
                 views_col = find_col(headers, 'views')
-                current_views = int(rec.get('Views', '0') or '0')
-                pending = 0
                 if views_col is not None:
-                    with _playlist_views_lock:
-                        _playlist_views[pid] = _playlist_views.get(pid, 0) + 1
-                        pending = _playlist_views.get(pid, 0)
+                    current_views = int(rec.get('Views', '0') or '0')
+                    sheets.update_cell('Playlists', i + 2, views_col + 1, str(current_views + 1))
                 # Parse song data
                 songs = []
                 try: songs = json.loads(rec.get('Song Data', '[]'))
-                except (json.JSONDecodeError, TypeError): pass
+                except: pass
                 return render_template('playlist_public.html',
                     playlist_name=rec.get('Name', ''),
                     playlist_desc=rec.get('Description', ''),
                     songs=songs,
-                    views=(current_views + pending) if views_col else 0,
+                    views=current_views + 1 if views_col else 0,
                     created=rec.get('Created', ''),
                     pid=pid)
         return "Playlist not found", 404
@@ -2508,7 +2331,7 @@ def api_follow_ups():
                 lo_date = None
                 for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%d %H:%M'):
                     try: lo_date = dt.strptime(lo.strip(), fmt); break
-                    except ValueError: pass
+                    except: pass
                 if not lo_date: continue
                 days_since = (now - lo_date).days
                 # Flag if outreach was 14+ days ago
@@ -2525,7 +2348,7 @@ def api_follow_ups():
                         'last_outreach': lo, 'days_since': days_since,
                         'priority': priority, 'row_index': i + 2
                     })
-            except (ValueError, TypeError): continue
+            except: continue
         reminders.sort(key=lambda r: r['days_since'], reverse=True)
         return jsonify({'reminders': reminders[:50], 'total': len(reminders)})
     except Exception as e:
@@ -2534,27 +2357,7 @@ def api_follow_ups():
 
 # ==================== EMAIL TEMPLATES (Google Sheets backed) ====================
 def _ensure_templates_sheet():
-    """Create Templates sheet if it doesn't exist."""
-    try:
-        data = sheets.get_all_rows('Templates')
-        if data: return True
-    except Exception:
-        pass
-    try:
-        sheets.service.spreadsheets().batchUpdate(
-            spreadsheetId=sheets.spreadsheet_id,
-            body={'requests': [{'addSheet': {'properties': {'title': 'Templates'}}}]}
-        ).execute()
-        headers = ['Name', 'Type', 'Subject', 'Body', 'Last Used']
-        sheets.service.spreadsheets().values().update(
-            spreadsheetId=sheets.spreadsheet_id, range="'Templates'!A1",
-            valueInputOption='USER_ENTERED', body={'values': [headers]}
-        ).execute()
-        sheets._invalidate_cache('Templates')
-        return True
-    except Exception as e:
-        logging.warning(f"Failed to create Templates sheet: {e}")
-        return False
+    return _ensure_sheet('Templates')
 
 @app.route('/api/templates')
 @login_required
@@ -2772,25 +2575,9 @@ if __name__ == '__main__':
                 build_city_lookup()
                 build_name_cache()
                 print(f"  Lazy rebuild: {len(resolver._cache)} IDs, {len(CITY_LOOKUP)} cities, {len(NAME_CACHE)} names")
-            except Exception as e:
-                logging.warning(f"Lazy rebuild failed: {e}")
+            except: pass
         # Remove this hook after first successful rebuild
         if len(resolver._cache) > 0:
             app.before_request_funcs[None] = [f for f in app.before_request_funcs.get(None, []) if f != _lazy_rebuild]
 
-    # Use gunicorn in production (single worker avoids ARM64 threading issues
-    # while still allowing concurrent request queuing).
-    # Fallback to Flask dev server with threading for local dev.
-    try:
-        import gunicorn
-        import subprocess, sys
-        subprocess.run([
-            sys.executable, '-m', 'gunicorn',
-            '-w', '1', '--threads', '4',
-            '-b', '0.0.0.0:5001',
-            '--timeout', '120',
-            'app:app'
-        ])
-    except ImportError:
-        print("  gunicorn not installed, using Flask dev server (threaded)")
-        app.run(host='0.0.0.0', port=5001, threaded=True)
+    app.run(host='0.0.0.0', port=5001, threaded=False)

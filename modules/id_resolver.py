@@ -126,7 +126,7 @@ class IDResolver:
                 label = obj.get('label', 'Link')
                 url = obj.get('url', '')
                 if url: return url
-            except (ValueError, KeyError): pass
+            except: pass
             return value
         if value.startswith('[') or value.startswith('{'):
             return value

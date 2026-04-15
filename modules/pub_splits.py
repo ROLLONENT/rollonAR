@@ -29,9 +29,7 @@ class PubSplitCalculator:
                 n = str(r[nc]).strip() if nc and nc < len(r) else ''
                 if n: lu[n.lower()] = {'name':n,'publisher':str(r[pc]).strip() if pc and pc<len(r) else '','pro':str(r[prc]).strip() if prc and prc<len(r) else ''}
             self._cache = lu; return lu
-        except Exception as e:
-            import logging; logging.warning(f"PubSplitCalculator load: {e}")
-            self._cache = {}; return {}
+        except: self._cache = {}; return {}
 
     def lookup_writer(self, name):
         p = self._load(); nl = name.strip().lower()

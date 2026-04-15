@@ -55,8 +55,5 @@ if [ ! -f "$CREDS" ] && [ -f "$FALLBACK/$CREDS" ]; then
     echo "  Copied credentials from ROLLON AR folder"
 fi
 
-# Ensure gunicorn is installed for production serving
-$PYTHON -c "import gunicorn" 2>/dev/null || $PYTHON -m pip install gunicorn -q
-
 echo ""
 $PYTHON app.py
