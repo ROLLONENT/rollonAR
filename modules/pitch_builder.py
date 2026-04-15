@@ -1,4 +1,5 @@
 """Pitch Campaign Builder — mirrors Airtable filter logic."""
+import re
 from datetime import datetime, timedelta
 
 PITCH_FILTERS = {
@@ -8,6 +9,7 @@ PITCH_FILTERS = {
     'Singer-Songwriter': {'field_has':['MGMT','Record A&R','A&R'],'tags_has':['Singer-Songwriter Pitch','SSW Pitch'],'tags_not':['Dont Pitch','Need Email','Blocked',"Don't Mass Pitch"]},
     'Sync': {'field_has':['Sync','Music Supervisor','Sync Agent'],'tags_has':['Sync Pitch'],'tags_not':['Dont Pitch','Need Email','Blocked',"Don't Mass Pitch"]},
     'Writing Trip': {'field_has':['MGMT','Record A&R','A&R'],'tags_has':['Writing Trip'],'tags_not':['Dont Pitch','Need Email','Blocked',"Don't Mass Pitch"]},
+    'Brand': {'field_has':['Brand PR','Brand Partnerships'],'tags_has':['Brand Target'],'tags_not':['Dont Pitch','Brand Pitched','Blocked']},
 }
 
 class PitchBuilder:
@@ -62,6 +64,8 @@ class PitchBuilder:
             r = self.sheets.create_new_spreadsheet(title, headers, rows)
             # Log to Pitch Log
             self.log_pitches(pitch_type, round_number, playlist_link, contacts)
+            # Auto-tag pitched contacts and set Last Outreach
+            self._auto_tag_pitched(pitch_type, contacts)
             return {'success':True,'spreadsheet_url':r['url'],'total_contacts':len(rows),'email_body':email,'title':title}
         except Exception as e:
             return {'success':False,'error':str(e),'total_contacts':len(rows),'email_body':email}
@@ -107,6 +111,41 @@ class PitchBuilder:
             except Exception as e:
                 print(f"Failed to log pitches: {e}")
 
+    def _auto_tag_pitched(self, pitch_type, contacts):
+        """Auto-tag pitched contacts and set Last Outreach date.
+        For Brand pitches: adds 'Brand Pitched' tag.
+        For all pitches: sets Last Outreach to today."""
+        try:
+            data = self.sheets.get_all_rows('Personnel')
+            if not data: return
+            headers = data[0]
+            def _clean(h): return re.sub(r'^\[.*?\]\s*', '', h).strip().lower()
+            clean = [_clean(h) for h in headers]
+            tc = next((i for i, h in enumerate(clean) if h == 'tags'), None)
+            lo = next((i for i, h in enumerate(clean) if h == 'last outreach'), None)
+            if tc is None and lo is None: return
+            today = datetime.now().strftime('%Y-%m-%d')
+            updates = []
+            for c in contacts:
+                if not c.get('selected', True): continue
+                ri = c.get('row_index')
+                if not ri: continue
+                # Set Last Outreach
+                if lo is not None:
+                    updates.append((ri, lo + 1, today))
+                # For Brand pitches, add 'Brand Pitched' tag
+                if pitch_type == 'Brand' and tc is not None:
+                    row = data[ri - 1] if ri - 1 < len(data) else []
+                    current_tags = str(row[tc]).strip() if tc < len(row) else ''
+                    tag_list = [t.strip() for t in current_tags.split('|') if t.strip()] if current_tags else []
+                    if 'Brand Pitched' not in tag_list:
+                        tag_list.append('Brand Pitched')
+                        updates.append((ri, tc + 1, ' | '.join(tag_list)))
+            if updates:
+                self.sheets.batch_update_cells('Personnel', updates)
+        except Exception as e:
+            print(f"Auto-tag pitched failed: {e}")
+
     def get_pitch_history(self, contact_name=None, song_title=None, limit=50):
         """Get pitch history filtered by contact or song."""
         try:
@@ -138,7 +177,7 @@ class PitchBuilder:
         return None
 
     def draft_email(self, pt, rn, pl):
-        starters = {'Dance':"Massive dance/electronic cuts this round — uptempo bangers and deeper groove-led tracks.",'Pop':"Strong pop batch — big hooks, clever lyrics, unexpected melodic twists.",'KPOP':"Exciting K-pop ready tracks — strong toplines with signature energy.",'Singer-Songwriter':"Beautiful singer-songwriter cuts — raw, honest, songs that stick.",'Sync':"Strong sync-ready tracks — versatile moods, clean stems, easy to clear.",'Writing Trip':"Putting together the next writing trip — here's what our writers have been cooking."}
+        starters = {'Dance':"Massive dance/electronic cuts this round — uptempo bangers and deeper groove-led tracks.",'Pop':"Strong pop batch — big hooks, clever lyrics, unexpected melodic twists.",'KPOP':"Exciting K-pop ready tracks — strong toplines with signature energy.",'Singer-Songwriter':"Beautiful singer-songwriter cuts — raw, honest, songs that stick.",'Sync':"Strong sync-ready tracks — versatile moods, clean stems, easy to clear.",'Writing Trip':"Putting together the next writing trip — here's what our writers have been cooking.",'Brand':"Reaching out about a creative partnership with EMMMA — alt-pop artist with a bold Brazilian visual identity and debut campaign dropping 2026."}
         return self._email(starters.get(pt, "Fresh batch of tracks for you."), pl, rn)
 
     def _email(self, bespoke, link, rn):
