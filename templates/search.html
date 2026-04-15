@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Search{% endblock %}
+{% block content %}
+<div style="padding:0 20px;max-width:800px">
+  <h1 style="color:var(--accent);margin-bottom:16px">Search Everything</h1>
+  <input class="toolbar-search" id="search-all" placeholder="Search across all tables..." style="width:100%;font-size:14px;padding:12px 16px;margin-bottom:20px" autofocus>
+  <div id="search-results"><p style="color:var(--text-ghost)">Type to search Songs, Personnel, Labels, Companies, and more.</p></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let _sDeb;
+document.getElementById('search-all').addEventListener('input',e=>{
+  clearTimeout(_sDeb);_sDeb=setTimeout(()=>{
+    const q=e.target.value.trim();if(q.length<2){document.getElementById('search-results').innerHTML='<p style="color:var(--text-ghost)">Type to search.</p>';return}
+    fetch('/api/search-record?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+      const results=d.results||[];
+      const el=document.getElementById('search-results');
+      if(!results.length){el.innerHTML='<p style="color:var(--text-ghost)">No results for "'+q+'"</p>';return}
+      // Group by table
+      const groups={};
+      results.forEach(r=>{if(!groups[r.table])groups[r.table]=[];groups[r.table].push(r)});
+      let html='';
+      Object.entries(groups).forEach(([table,items])=>{
+        html+='<div style="margin-bottom:16px">';
+        html+='<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text-ghost);margin-bottom:6px">'+table+' ('+items.length+')</div>';
+        items.forEach(item=>{
+          html+='<div class="search-result-item" onclick="navToRecord(\''+escA(item.name)+'\')" style="cursor:pointer">';
+          html+='<span class="pill pill-link">'+esc(item.name)+'</span>';
+          if(item.route)html+='<span style="font-size:10px;color:var(--text-ghost);margin-left:8px">Row '+item.row_index+'</span>';
+          html+='</div>';
+        });
+        html+='</div>';
+      });
+      el.innerHTML=html;
+    });
+  },200);
+});
+</script>
+{% endblock %}

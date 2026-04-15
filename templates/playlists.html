@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Playlists{% endblock %}
+{% block content %}
+<div style="padding:0 20px;max-width:900px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="color:var(--accent);font-size:20px">Playlists</h1>
+    <button class="btn btn-accent" onclick="createPlaylist()">+ New Playlist</button>
+  </div>
+  <div id="playlist-list"><div class="loading"><span class="spinner"></span></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function loadPlaylists(){
+  fetch('/api/playlists').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('playlist-list');
+    const pls=d.playlists||[];
+    if(!pls.length){el.innerHTML='<p style="color:var(--text-ghost)">No playlists yet. Create one from the Songs page or click + New Playlist.</p>';return}
+    let html='';
+    pls.forEach(p=>{
+      const songs=p['Song Data']?JSON.parse(p['Song Data']).length:0;
+      html+='<div style="padding:14px 16px;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-lg);margin-bottom:10px;display:flex;align-items:center;gap:12px">';
+      html+='<div style="flex:1"><div style="font-weight:600;font-size:14px;color:var(--text)">'+esc(p.Name||'Untitled')+'</div>';
+      html+='<div style="font-size:11px;color:var(--text-ghost);margin-top:2px">'+songs+' songs &middot; '+esc(p.Views||'0')+' views &middot; Created '+esc(p.Created||'')+'</div>';
+      if(p.Description)html+='<div style="font-size:12px;color:var(--text-dim);margin-top:4px">'+esc(p.Description)+'</div>';
+      html+='</div>';
+      html+='<button class="btn btn-sm" onclick="copyLink(\''+esc(p.ID)+'\')">Copy Link</button>';
+      html+='<a class="btn btn-sm btn-accent" href="/p/'+esc(p.ID)+'" target="_blank">Open</a>';
+      html+='<button class="btn btn-sm" onclick="deletePlaylist(\''+esc(p.ID)+'\')" style="color:var(--danger)">Delete</button>';
+      html+='</div>';
+    });
+    el.innerHTML=html;
+  });
+}
+
+function createPlaylist(){
+  showPromptModal('Create Playlist',[
+    {label:'Playlist Name',placeholder:'e.g. EMMMA Singles 2026'},
+    {label:'Description (optional)',placeholder:'Songs for review...'}
+  ],(v)=>{
+    if(!v[0])return;
+    // Get selected songs from Songs page (if any in sessionStorage)
+    let songIds=[];
+    try{songIds=JSON.parse(sessionStorage.getItem('playlist_songs')||'[]')}catch(e){}
+    if(!songIds.length){
+      toast('Go to Songs page, select songs with checkboxes, then create playlist','error');return;
+    }
+    fetch('/api/playlists/create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:v[0],description:v[1]||'',song_ids:songIds})
+    }).then(r=>r.json()).then(d=>{
+      if(d.success){toast('Playlist created: '+d.songs+' songs');sessionStorage.removeItem('playlist_songs');loadPlaylists();
+        setTimeout(()=>{window.open('/p/'+d.id,'_blank')},500)}
+      else toast(d.error||'Failed','error');
+    });
+  });
+}
+
+function copyLink(pid){
+  const url=location.origin+'/p/'+pid;
+  navigator.clipboard.writeText(url).then(()=>toast('Link copied!')).catch(()=>toast('Copy failed','error'));
+}
+
+function deletePlaylist(pid){
+  if(!confirm('Delete this playlist?'))return;
+  fetch('/api/playlists/'+pid+'/delete',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){toast('Deleted');loadPlaylists()}else toast(d.error||'Failed','error')});
+}
+
+loadPlaylists();
+</script>
+{% endblock %}

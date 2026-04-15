@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROLLON ENT | Song Submission</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#131316;--bg-raised:#1c1c21;--border:#2a2a32;--border-strong:#3a3a45;--text:#e8e6e3;--text-dim:#9a9a9f;--text-ghost:#5a5a62;--accent:#d4a853;--accent-dim:rgba(212,168,83,.1);--danger:#ef4444;--success:#22c55e;--font:'DM Sans',sans-serif;--font-b:'Inter',sans-serif;--font-m:'JetBrains Mono',monospace;--r-md:8px;--r-lg:12px;--r-xl:16px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--font-b);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 30% 20%,rgba(212,168,83,.04) 0%,transparent 60%);pointer-events:none}
+.sc{width:100%;max-width:640px;position:relative;z-index:1}
+.sh{text-align:center;margin-bottom:32px}
+.sh h1{font-family:var(--font);font-size:28px;font-weight:700;letter-spacing:2px;color:var(--accent);margin-bottom:4px}
+.sh p{color:var(--text-dim);font-size:13px}
+.sf{background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-xl);padding:32px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.fs{margin-bottom:24px}.fst{font-family:var(--font);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.fg{margin-bottom:14px}.fg label{display:block;font-size:12px;font-weight:500;color:var(--text-dim);margin-bottom:5px}
+.req::after{content:' *';color:var(--danger);font-size:10px}
+.fi,.fta{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;color:var(--text);font-family:var(--font-b);font-size:13px;transition:border-color .15s}
+.fi:focus,.fta:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.fta{resize:vertical;min-height:80px}
+.fh{font-size:11px;color:var(--text-ghost);margin-top:4px}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:500px){.fr,.fr3{grid-template-columns:1fr}}
+.pf{position:relative;min-height:38px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);display:flex;flex-wrap:wrap;gap:4px;align-items:center;cursor:text}
+.pf:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.pf .pill{font-size:11px;padding:2px 8px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(212,168,83,.2);border-radius:20px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.pf .pill .px{cursor:pointer;font-size:14px;line-height:1;opacity:.6}.pf .pill .px:hover{opacity:1;color:var(--danger)}
+.pf .pill.np{border-color:#f59e0b;background:rgba(245,158,11,.1);color:#f59e0b}
+.pf input{border:none;background:none;color:var(--text);font-size:12px;min-width:80px;flex:1;outline:none;padding:4px 0}
+.pdd{position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:50;display:none}
+.pdd-i{padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)}.pdd-i:hover{background:rgba(212,168,83,.08);color:var(--accent)}.pdd-n{color:#f59e0b;font-style:italic}
+.sbtn{width:100%;padding:14px;background:var(--accent);color:#131316;border:none;border-radius:var(--r-lg);font-family:var(--font);font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;margin-top:8px}
+.sbtn:hover{background:#e0b45e;transform:translateY(-1px)}.sbtn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.ss{text-align:center;padding:40px 20px;display:none}.ss h2{font-family:var(--font);color:var(--accent);margin-bottom:8px}.ss p{color:var(--text-dim);font-size:13px}
+.ss .ba{display:inline-block;margin-top:20px;padding:10px 24px;color:var(--accent);border:1px solid var(--accent);border-radius:var(--r-md);cursor:pointer;font-size:13px;text-decoration:none}
+.ss .ba:hover{background:var(--accent-dim)}
+.ss-review{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px 20px;margin:20px auto 0;max-width:460px;text-align:left}
+.ss-review .rv{display:flex;justify-content:space-between;padding:6px 0;font-size:12px;border-bottom:1px solid var(--border)}
+.ss-review .rv:last-child{border-bottom:none}
+.ss-review .rv .rl{color:var(--text-dim);flex:0 0 110px}.ss-review .rv .rr{color:var(--text);text-align:right;word-break:break-word}
+.ss-review .rv .rr a{color:var(--accent);text-decoration:none;font-size:11px}
+.ss-email-note{font-size:11px;color:var(--text-ghost);margin-top:12px}
+.ss-edit-banner{background:rgba(212,168,83,.08);border:1px solid rgba(212,168,83,.2);border-radius:var(--r-lg);padding:12px 16px;margin-bottom:20px;text-align:center}
+.ss-edit-banner p{font-size:12px;color:var(--accent);margin:0}
+.ss-edit-banner .timer{font-family:var(--font-m);font-size:11px;color:var(--text-dim);margin-top:4px}
+.fe{color:var(--danger);font-size:12px;margin-top:4px;display:none}
+.sf2{text-align:center;margin-top:20px;font-size:11px;color:var(--text-ghost)}.sf2 a{color:var(--accent);text-decoration:none}
+.slb{display:inline-block;padding:3px 10px;margin:2px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);color:var(--text-dim);font-size:11px;cursor:pointer}.slb:hover{border-color:var(--accent);color:var(--accent)}
+.wr{display:flex;gap:6px;align-items:center;margin-bottom:6px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);position:relative}
+.wr input{border:none;background:none;color:var(--text);font-size:12px;outline:none;padding:4px 0}.wr input:focus{border-bottom:1px solid var(--accent)}
+.wr .wn{flex:2}.wr .ws{flex:0 0 70px;text-align:center;font-family:var(--font-m);font-size:11px}
+.wr .wx{cursor:pointer;color:var(--text-ghost);font-size:16px;padding:0 4px}.wr .wx:hover{color:var(--danger)}
+.wr .pdd{top:100%;left:0;right:70px}
+/* Status dropdown */
+.sd{position:relative}.sd-dd{position:absolute;top:100%;left:0;right:0;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:50;display:none}
+.sd-dd div{padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)}.sd-dd div:hover{background:rgba(212,168,83,.08);color:var(--accent)}
+/* Status pills */
+.status-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.status-pills .sp{padding:5px 14px;font-size:11px;font-weight:600;border-radius:20px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);transition:all .15s;letter-spacing:.3px}
+.status-pills .sp:hover{border-color:var(--accent);color:var(--accent)}
+.status-pills .sp.active{background:var(--accent);color:#131316;border-color:var(--accent)}
+/* Notes modal overlay */
+.notes-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:center;justify-content:center;padding:24px}
+.notes-overlay.open{display:flex}
+.notes-panel{background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-xl);width:100%;max-width:540px;padding:24px;box-shadow:0 16px 48px rgba(0,0,0,.4)}
+.notes-panel h3{font-family:var(--font);font-size:14px;font-weight:600;color:var(--accent);margin-bottom:12px}
+.notes-panel textarea{width:100%;min-height:180px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;color:var(--text);font-family:var(--font-b);font-size:13px;resize:vertical;line-height:1.6}
+.notes-panel textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.notes-panel .notes-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.notes-panel .notes-actions button{padding:8px 20px;border-radius:var(--r-md);font-size:12px;font-weight:600;cursor:pointer;border:none}
+.notes-panel .nbtn-cancel{background:var(--bg);color:var(--text-dim);border:1px solid var(--border) !important}
+.notes-panel .nbtn-save{background:var(--accent);color:#131316}
+/* Calculate Splits button */
+.calc-splits-btn{width:100%;padding:12px;background:transparent;color:var(--accent);border:2px dashed var(--accent);border-radius:var(--r-lg);font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;letter-spacing:.5px}
+.calc-splits-btn:hover{background:var(--accent-dim)}
+.splits-status{margin-top:8px;font-size:12px;text-align:center;min-height:20px}
+.splits-status.ok{color:var(--success)}.splits-status.err{color:var(--danger)}
+/* Splits popup */
+.splits-popup-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:210;display:none;align-items:center;justify-content:center;padding:24px}
+.splits-popup-overlay.open{display:flex}
+.splits-popup{background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-xl);width:100%;max-width:380px;padding:24px;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,.4)}
+.splits-popup h3{font-family:var(--font);font-size:14px;font-weight:600;color:var(--accent);margin-bottom:6px}
+.splits-popup p{font-size:12px;color:var(--text-dim);margin-bottom:16px}
+.splits-popup .sp-btns{display:flex;flex-direction:column;gap:6px}
+.splits-popup .sp-pick{padding:10px 16px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);color:var(--text);font-size:13px;cursor:pointer;transition:all .15s;text-align:left}
+.splits-popup .sp-pick:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.notes-btn{position:relative}
+.notes-btn.has-notes{color:var(--text) !important}
+.refresh-btn{background:none;border:1px solid var(--border);color:var(--text-ghost);font-size:11px;padding:5px 12px;border-radius:var(--r-md);cursor:pointer;font-family:var(--font-b);transition:all .15s}
+.refresh-btn:hover{border-color:var(--accent);color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="sc">
+  <div class="sh"><h1>ROLLON ENT</h1><p>Song Submission Portal</p></div>
+  <div class="sf" id="sf">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button type="button" class="refresh-btn" onclick="if(confirm('Clear the form and start fresh?'))resetForm()">Refresh Form</button></div>
+
+    <!-- YOUR DETAILS (first) -->
+    <div class="fs"><div class="fst">Your Details</div>
+      <div class="fr">
+        <div class="fg"><label><span class="req">Your Name</span></label><input class="fi" id="f-submitter" placeholder="Full name"></div>
+        <div class="fg"><label><span class="req">Your Email</span></label><input class="fi" id="f-email" type="email" placeholder="you@example.com"></div>
+      </div>
+    </div>
+
+    <!-- SONG INFO -->
+    <div class="fs"><div class="fst">Song Information</div>
+      <div class="fg"><label><span class="req">Song Title</span></label><input class="fi" id="f-title" placeholder="e.g. Midnight Drive"></div>
+      <div class="fr3">
+        <div class="fg"><label>Genre</label>
+          <div class="pf" id="pf-genre" onclick="this.querySelector('input').focus()"><input placeholder="Add..." oninput="genreSearch(this)" onkeydown="genreKey(event,this)"><div class="pdd" id="pdd-genre"></div></div></div>
+        <div class="fg"><label>Audio Status</label>
+          <div class="status-pills" id="status-pills"></div>
+          <input type="hidden" id="f-status" value="Demo"></div>
+        <div class="fg"><label>BPM</label><input class="fi" id="f-bpm" placeholder="120" type="number"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Duration</label><input class="fi" id="f-duration" placeholder="00:00:00" maxlength="8" oninput="formatDuration(this)" style="font-family:var(--font-m);width:110px"></div>
+        <div class="fg"><label>Notes</label><button type="button" class="fi notes-btn" id="notes-btn" onclick="openNotesModal()" style="text-align:left;cursor:pointer;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Click to add notes...</button><input type="hidden" id="f-notes" value=""></div>
+      </div>
+    </div>
+
+    <!-- SONGWRITERS + SPLITS -->
+    <div class="fs"><div class="fst">Songwriters + Splits</div>
+      <div id="writers-list"></div>
+      <div style="display:flex;gap:8px;margin-top:6px"><span class="slb" onclick="addWriter()">+ Add Writer</span><span class="slb" onclick="equalSplits()">= Equal Splits</span></div>
+      <div class="fh">Search Personnel or type new. Splits optional (e.g. 33.33%).</div>
+    </div>
+
+    <!-- PRODUCTION -->
+    <div class="fs"><div class="fst">Production Credits</div>
+      <div class="fg"><label>Producers</label>
+        <div class="pf" id="pf-producers" onclick="this.querySelector('input').focus()"><input placeholder="Search..." oninput="pfSearch(this,'pf-producers')" onkeydown="pfKey(event,this,'pf-producers')"><div class="pdd" id="pdd-producers"></div></div></div>
+      <div class="fg"><label>Artists</label>
+        <div class="pf" id="pf-artists" onclick="this.querySelector('input').focus()"><input placeholder="Search..." oninput="pfSearch(this,'pf-artists')" onkeydown="pfKey(event,this,'pf-artists')"><div class="pdd" id="pdd-artists"></div></div></div>
+      <div class="fg"><label>Vocalists</label>
+        <div class="pf" id="pf-vocalists" onclick="this.querySelector('input').focus()"><input placeholder="Search..." oninput="pfSearch(this,'pf-vocalists')" onkeydown="pfKey(event,this,'pf-vocalists')"><div class="pdd" id="pdd-vocalists"></div></div></div>
+      <div style="margin-top:12px">
+        <button type="button" class="calc-splits-btn" id="calc-splits-btn" onclick="calculateSplits()">Calculate Splits</button>
+        <div class="splits-status" id="splits-status"></div>
+      </div>
+    </div>
+
+    <!-- AUDIO -->
+    <div class="fs"><div class="fst">Audio + Files</div>
+      <div class="fg"><label><span class="req">Download Link</span></label><input class="fi" id="f-audio" placeholder="Dropbox, Google Drive, WeTransfer link" onfocus="urlPrefill(this)" onblur="urlClean(this)"></div>
+      <div class="fg"><label>Lyric Document Link</label><input class="fi" id="f-lyricdoc" placeholder="Google Docs or Dropbox link" onfocus="urlPrefill(this)" onblur="urlClean(this)"></div>
+    </div>
+
+    <!-- LYRICS -->
+    <div class="fs"><div class="fst">Lyrics</div>
+      <div class="fg" style="position:relative">
+        <textarea class="fta" id="f-lyrics" rows="14" placeholder="Paste lyrics here. Use section buttons to label, or type Verse: Chorus: etc." style="font-family:var(--font-m);font-size:12px;line-height:1.6;overflow-y:scroll;max-height:400px"></textarea>
+        <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+          <span class="slb" onclick="insertLabel('[VERSE]')">Verse</span>
+          <span class="slb" onclick="insertLabel('[PRE-CHORUS]')">Pre-Chorus</span>
+          <span class="slb" onclick="insertLabel('[CHORUS]')">Chorus</span>
+          <span class="slb" onclick="insertLabel('[POST-CHORUS]')">Post-Chorus</span>
+          <span class="slb" onclick="insertLabel('[BRIDGE]')">Bridge</span>
+          <span class="slb" onclick="insertLabel('[HOOK]')">Hook</span>
+          <span class="slb" onclick="insertLabel('[OUTRO]')">Outro</span>
+          <span class="slb" onclick="insertLabel('[INTRO]')">Intro</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="fe" id="form-error"></div>
+    <button class="sbtn" id="submit-btn" onclick="submitSong()">Submit Song</button>
+  </div>
+  <div class="ss" id="ss">
+    <div style="font-size:48px;margin-bottom:16px">&#10003;</div>
+    <h2 id="ss-title">Song Submitted!</h2>
+    <p id="ss-subtitle">Thanks! Celina will review and get back to you.</p>
+    <div id="ss-review" class="ss-review"></div>
+    <div id="ss-email-note" class="ss-email-note"></div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:20px;flex-wrap:wrap">
+      <a class="ba" id="ss-edit-btn" onclick="editSubmission()">Edit Submission</a>
+      <a class="ba" onclick="resetForm()" style="border-color:var(--border);color:var(--text-dim)">Add Another Song</a>
+    </div>
+  </div>
+  <div class="sf2">Powered by <a href="https://rollonent.com" target="_blank">ROLLON ENT</a></div>
+</div>
+<!-- Notes Modal -->
+<div class="notes-overlay" id="notes-overlay" onclick="if(event.target===this)closeNotesModal()">
+  <div class="notes-panel">
+    <h3>Notes</h3>
+    <textarea id="notes-textarea" placeholder="Context, references, additional info..."></textarea>
+    <div class="notes-actions">
+      <button class="nbtn-cancel" onclick="closeNotesModal()">Cancel</button>
+      <button class="nbtn-save" onclick="saveNotes()">Save</button>
+    </div>
+  </div>
+</div>
+<!-- Splits Popup -->
+<div class="splits-popup-overlay" id="splits-popup-overlay" onclick="if(event.target===this)closeSplitsPopup()">
+  <div class="splits-popup" id="splits-popup">
+    <h3>Extra 0.01%</h3>
+    <p>3-way equal split = 33.33% each (99.99%). Who gets the extra 0.01%?</p>
+    <div class="sp-btns" id="sp-btns"></div>
+  </div>
+</div>
+<script>
+const _np=[];const _pills={};
+const _genres=['Pop','Dance / Electronic','R&B / Soul','Hip-Hop / Rap','Singer-Songwriter','Indie','Rock','Country','K-Pop','Latin','Alt-Pop','Bedroom Pop','Folk','Jazz','Classical','Reggaeton','Afrobeats','Other'];
+const _statuses=['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];
+const _params=new URLSearchParams(location.search);
+let _splitsConfirmed=false;
+let _editToken=null;
+let _lastSubmitData=null;
+
+// ---- URL PREFILL ----
+function urlPrefill(inp){if(!inp.value.trim()){inp.value='http://';inp.setSelectionRange(7,7)}}
+function urlClean(inp){if(inp.value==='http://'||inp.value==='https://')inp.value=''}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  if(_params.get('name'))document.getElementById('f-submitter').value=_params.get('name');
+  if(_params.get('email'))document.getElementById('f-email').value=_params.get('email');
+  if(_params.get('writer'))addWriterRow(_params.get('writer'),'',false);
+  else addWriterRow('','',false);
+  renderStatusPills();
+  // Check for edit token
+  const editToken=_params.get('edit');
+  if(editToken){loadEditMode(editToken)}
+});
+
+// ---- STATUS PILLS ----
+function renderStatusPills(){
+  const el=document.getElementById('status-pills');
+  el.innerHTML=_statuses.map(s=>`<span class="sp${s==='Demo'?' active':''}" onclick="pickStatus('${s}')">${s}</span>`).join('');
+}
+function pickStatus(s){
+  document.getElementById('f-status').value=s;
+  document.querySelectorAll('#status-pills .sp').forEach(el=>{
+    el.classList.toggle('active',el.textContent===s);
+  });
+}
+
+// ---- DURATION FORMATTER (HH:MM:SS) ----
+function formatDuration(inp){
+  let v=inp.value.replace(/[^0-9]/g,'');
+  if(v.length>6)v=v.substring(0,6);
+  let formatted='';
+  if(v.length<=2)formatted=v;
+  else if(v.length<=4)formatted=v.substring(0,2)+':'+v.substring(2);
+  else formatted=v.substring(0,2)+':'+v.substring(2,4)+':'+v.substring(4);
+  inp.value=formatted;
+}
+
+// ---- NOTES MODAL ----
+function openNotesModal(){
+  const current=document.getElementById('f-notes').value;
+  document.getElementById('notes-textarea').value=current;
+  document.getElementById('notes-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('notes-textarea').focus(),50);
+}
+function closeNotesModal(){document.getElementById('notes-overlay').classList.remove('open')}
+function saveNotes(){
+  const val=document.getElementById('notes-textarea').value.trim();
+  document.getElementById('f-notes').value=val;
+  const btn=document.getElementById('notes-btn');
+  if(val){btn.textContent=val.length>50?val.substring(0,50)+'...':val;btn.classList.add('has-notes')}
+  else{btn.textContent='Click to add notes...';btn.classList.remove('has-notes')}
+  closeNotesModal();
+}
+
+// ---- GENRE PILL ----
+function genreSearch(inp){const dd=document.getElementById('pdd-genre');const q=inp.value.toLowerCase();const pills=getPills('pf-genre');
+  const m=_genres.filter(g=>g.toLowerCase().includes(q)&&!pills.find(p=>p.name===g));
+  dd.innerHTML=m.map(g=>'<div class="pdd-i" onclick="addPill(\'pf-genre\',\''+g+'\',false);document.getElementById(\'pdd-genre\').style.display=\'none\'">'+g+'</div>').join('');
+  if(q&&!_genres.find(g=>g.toLowerCase()===q))dd.innerHTML+='<div class="pdd-i pdd-n" onclick="addPill(\'pf-genre\',\''+inp.value.trim()+'\',false);document.getElementById(\'pdd-genre\').style.display=\'none\'">+ "'+inp.value.trim()+'"</div>';
+  dd.style.display=m.length||q?'block':'none'}
+function genreKey(e,inp){if(e.key==='Enter'){e.preventDefault();if(inp.value.trim())addPill('pf-genre',inp.value.trim(),false);document.getElementById('pdd-genre').style.display='none'}}
+
+// ---- PILLS ----
+function getPills(id){return _pills[id]||(_pills[id]=[])}
+function addPill(fid,name,isNew){const pills=getPills(fid);if(pills.find(p=>p.name.toLowerCase()===name.toLowerCase()))return;
+  pills.push({name,isNew});if(isNew)_np.push({name,role:fid==='pf-producers'?'producer':fid==='pf-vocalists'?'vocalist':'artist'});renderPills(fid)}
+function removePill(fid,name){const pills=getPills(fid);const i=pills.findIndex(p=>p.name===name);if(i>=0)pills.splice(i,1);const ni=_np.findIndex(p=>p.name===name);if(ni>=0)_np.splice(ni,1);renderPills(fid)}
+function renderPills(fid){const el=document.getElementById(fid);if(!el)return;const pills=getPills(fid);const inp=el.querySelector('input');
+  el.querySelectorAll('.pill').forEach(p=>p.remove());
+  pills.forEach(p=>{const s=document.createElement('span');s.className='pill'+(p.isNew?' np':'');s.innerHTML=p.name+' <span class="px" onclick="removePill(\''+fid+'\',\''+p.name.replace(/'/g,"\\'")+'\')">&times;</span>';el.insertBefore(s,inp)});inp.value=''}
+let _sd;
+function pfSearch(inp,fid){clearTimeout(_sd);const dd=document.getElementById('pdd-'+fid.replace('pf-',''));if(!dd)return;
+  _sd=setTimeout(()=>{const q=inp.value.trim();if(q.length<1){dd.style.display='none';return}
+    fetch('/api/public/search-names?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+      const names=d.names||[];let h=names.map(n=>'<div class="pdd-i" onclick="addPill(\''+fid+'\',\''+n.replace(/'/g,"\\'")+'\',false);document.getElementById(\'pdd-'+fid.replace('pf-','')+'\').style.display=\'none\'">'+n+'</div>').join('');
+      h+='<div class="pdd-i pdd-n" onclick="addPill(\''+fid+'\',\''+q.replace(/'/g,"\\'")+'\',true);document.getElementById(\'pdd-'+fid.replace('pf-','')+'\').style.display=\'none\'">+ "'+q+'" (new)</div>';
+      dd.innerHTML=h;dd.style.display='block'}).catch(()=>{dd.style.display='none'})},80)}
+function pfKey(e,inp,fid){if(e.key==='Enter'){e.preventDefault();const q=inp.value.trim();if(!q)return;addPill(fid,q,true);document.getElementById('pdd-'+fid.replace('pf-','')).style.display='none'}}
+document.addEventListener('click',e=>{if(!e.target.closest('.pf')&&!e.target.closest('.wr'))document.querySelectorAll('.pdd').forEach(d=>d.style.display='none')});
+
+// ---- WRITERS WITH SPLITS ----
+function addWriter(){addWriterRow('','',false)}
+function addWriterRow(name,split,isNew){
+  const list=document.getElementById('writers-list');const row=document.createElement('div');row.className='wr';
+  row.innerHTML='<input class="wn" placeholder="Writer name..." value="'+(name||'')+'" oninput="writerSearch(this)"><input class="ws" placeholder="%" value="'+(split||'')+'"><span class="wx" onclick="this.closest(\'.wr\').remove();_splitsConfirmed=false;updateSplitsStatus()">&times;</span><div class="pdd" style="display:none"></div>';
+  list.appendChild(row);if(isNew&&name){row.querySelector('.wn').style.borderColor='#f59e0b';_np.push({name,role:'writer'})}}
+function writerSearch(inp){clearTimeout(_sd);const dd=inp.closest('.wr').querySelector('.pdd');if(!dd)return;
+  _sd=setTimeout(()=>{const q=inp.value.trim();if(q.length<1){dd.style.display='none';return}
+    fetch('/api/public/search-names?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+      const names=d.names||[];let h=names.map(n=>'<div class="pdd-i" onclick="pickWriter(this,\''+n.replace(/'/g,"\\'")+'\')">' +n+'</div>').join('');
+      h+='<div class="pdd-i pdd-n" onclick="pickWriter(this,\''+q.replace(/'/g,"\\'")+'\',true)">+ "'+q+'" (new)</div>';
+      dd.innerHTML=h;dd.style.display='block'}).catch(()=>{dd.style.display='none'})},80)}
+function pickWriter(el,name,isNew){const wr=el.closest('.wr');wr.querySelector('.wn').value=name;wr.querySelector('.pdd').style.display='none';
+  if(isNew){wr.querySelector('.wn').style.borderColor='#f59e0b';_np.push({name,role:'writer'})}}
+
+function equalSplits(){
+  const rows=document.querySelectorAll('#writers-list .wr');if(!rows.length)return;
+  const count=rows.length;
+  if(count===3){
+    // 3-way: show popup for extra 0.01%
+    showSplitsPopup(rows);
+  } else {
+    const pct=(100/count).toFixed(2);
+    // Check if it totals exactly 100
+    const total=parseFloat(pct)*count;
+    if(Math.abs(total-100)<0.001){
+      rows.forEach(r=>r.querySelector('.ws').value=pct+'%');
+    } else {
+      // Give first person the remainder
+      const base=Math.floor(10000/count)/100;
+      const remainder=(100-base*count).toFixed(2);
+      rows.forEach((r,i)=>{
+        r.querySelector('.ws').value=(i===0?(base+parseFloat(remainder)).toFixed(2):base.toFixed(2))+'%';
+      });
+    }
+    _splitsConfirmed=true;
+    updateSplitsStatus();
+  }
+}
+
+// ---- CALCULATE SPLITS ----
+function calculateSplits(){
+  const rows=document.querySelectorAll('#writers-list .wr');
+  const status=document.getElementById('splits-status');
+  if(!rows.length){status.textContent='Add at least one writer first.';status.className='splits-status err';return}
+  // Check if any writers have names
+  const namedRows=[];
+  rows.forEach(r=>{const n=r.querySelector('.wn').value.trim();if(n)namedRows.push(r)});
+  if(!namedRows.length){status.textContent='Add writer names first.';status.className='splits-status err';return}
+  // Check if splits are filled
+  let total=0;let allFilled=true;
+  rows.forEach(r=>{
+    const v=r.querySelector('.ws').value.replace('%','').trim();
+    if(!v||isNaN(parseFloat(v))){allFilled=false}
+    else{total+=parseFloat(v)}
+  });
+  if(!allFilled){
+    status.textContent='Fill in all split percentages, or use Equal Splits.';status.className='splits-status err';return}
+  total=Math.round(total*100)/100;
+  if(Math.abs(total-100)<0.001){
+    _splitsConfirmed=true;
+    status.textContent='Splits confirmed: 100.00%';status.className='splits-status ok';
+  } else {
+    _splitsConfirmed=false;
+    status.textContent='Splits total '+total.toFixed(2)+'% (must be exactly 100.00%)';status.className='splits-status err';
+  }
+}
+
+function updateSplitsStatus(){
+  const rows=document.querySelectorAll('#writers-list .wr');
+  const status=document.getElementById('splits-status');
+  if(!rows.length){status.textContent='';status.className='splits-status';_splitsConfirmed=false;return}
+  let total=0;let allFilled=true;
+  rows.forEach(r=>{
+    const v=r.querySelector('.ws').value.replace('%','').trim();
+    if(!v||isNaN(parseFloat(v))){allFilled=false}
+    else{total+=parseFloat(v)}
+  });
+  if(!allFilled){status.textContent='';status.className='splits-status';return}
+  total=Math.round(total*100)/100;
+  if(Math.abs(total-100)<0.001){
+    _splitsConfirmed=true;
+    status.textContent='Splits confirmed: 100.00%';status.className='splits-status ok';
+  } else {
+    _splitsConfirmed=false;
+    status.textContent='Splits total '+total.toFixed(2)+'% (must be exactly 100.00%)';status.className='splits-status err';
+  }
+}
+
+// ---- SPLITS POPUP (3-way 0.01%) ----
+function showSplitsPopup(rows){
+  const btns=document.getElementById('sp-btns');
+  // Collect writer names, or fall back to role labels
+  const names=[];
+  rows.forEach((r,i)=>{
+    const n=r.querySelector('.wn').value.trim();
+    names.push(n||'Writer '+(i+1));
+  });
+  // Check if "Artist" role exists among writers or in the Artists pill field
+  const artistPills=getPills('pf-artists').map(p=>p.name.toLowerCase());
+  const vocalistPills=getPills('pf-vocalists').map(p=>p.name.toLowerCase());
+  // Try auto-assign: if a writer is also the Artist, give them the 0.01%
+  let autoIdx=-1;
+  for(let i=0;i<names.length;i++){
+    if(artistPills.includes(names[i].toLowerCase())){autoIdx=i;break}
+  }
+  // If no artist match, try vocalist
+  if(autoIdx===-1){
+    for(let i=0;i<names.length;i++){
+      if(vocalistPills.includes(names[i].toLowerCase())){autoIdx=i;break}
+    }
+  }
+  if(autoIdx>=0){
+    // Auto-assign without popup
+    applySplits3Way(rows,autoIdx);
+    return;
+  }
+  // Show popup to choose
+  btns.innerHTML=names.map((n,i)=>
+    `<button class="sp-pick" onclick="applySplits3Way(document.querySelectorAll('#writers-list .wr'),${i});closeSplitsPopup()">${n} gets 33.34%</button>`
+  ).join('');
+  document.getElementById('splits-popup-overlay').classList.add('open');
+}
+function applySplits3Way(rows,extraIdx){
+  rows.forEach((r,i)=>{
+    r.querySelector('.ws').value=(i===extraIdx?'33.34':'33.33')+'%';
+  });
+  _splitsConfirmed=true;
+  updateSplitsStatus();
+}
+function closeSplitsPopup(){document.getElementById('splits-popup-overlay').classList.remove('open')}
+
+// ---- SECTION LABELS ----
+function insertLabel(label){const ta=document.getElementById('f-lyrics');const pos=ta.selectionStart;const val=ta.value;
+  const before=pos>0&&val[pos-1]!=='\n'?'\n\n':pos>0?'\n':'';
+  ta.value=val.substring(0,pos)+before+label+'\n'+val.substring(pos);
+  ta.selectionStart=ta.selectionEnd=pos+before.length+label.length+1;ta.focus()}
+
+// ---- SUBMIT ----
+function submitSong(){
+  const btn=document.getElementById('submit-btn');const err=document.getElementById('form-error');err.style.display='none';
+  const title=document.getElementById('f-title').value.trim();
+  const submitter=document.getElementById('f-submitter').value.trim();
+  const email=document.getElementById('f-email').value.trim();
+  const audio=document.getElementById('f-audio').value.trim();
+  if(!title){err.textContent='Song title required.';err.style.display='block';return}
+  if(!submitter){err.textContent='Your name required.';err.style.display='block';return}
+  if(!email){err.textContent='Your email required.';err.style.display='block';return}
+  if(!audio){err.textContent='Download link required.';err.style.display='block';return}
+  // Validate splits total 100% if any writers have splits
+  const writerRows=document.querySelectorAll('#writers-list .wr');
+  let hasSplits=false;let splitsTotal=0;
+  writerRows.forEach(r=>{
+    const v=r.querySelector('.ws').value.replace('%','').trim();
+    if(v&&!isNaN(parseFloat(v))){hasSplits=true;splitsTotal+=parseFloat(v)}
+  });
+  if(hasSplits){
+    splitsTotal=Math.round(splitsTotal*100)/100;
+    if(Math.abs(splitsTotal-100)>=0.001){
+      err.textContent='Songwriter splits must total exactly 100%. Currently: '+splitsTotal.toFixed(2)+'%. Use Calculate Splits to verify.';
+      err.style.display='block';return;
+    }
+  }
+  const writers=[];writerRows.forEach(r=>{
+    const n=r.querySelector('.wn').value.trim();const s=r.querySelector('.ws').value.trim();if(n)writers.push(s?n+' ('+s+')':n)});
+  const dur=document.getElementById('f-duration').value||'';
+  const data={title,genre:getPills('pf-genre').map(p=>p.name).join(' | '),
+    audio_status:document.getElementById('f-status').value||'Demo',
+    bpm:document.getElementById('f-bpm').value.trim(),duration:dur,
+    songwriter_credits:writers.join(' | '),
+    producer:getPills('pf-producers').map(p=>p.name).join(' | '),
+    artist:getPills('pf-artists').map(p=>p.name).join(' | '),
+    vocalist:getPills('pf-vocalists').map(p=>p.name).join(' | '),
+    dropbox_link:audio,lyricdoc:document.getElementById('f-lyricdoc').value.trim(),
+    lyrics:document.getElementById('f-lyrics').value.trim(),
+    notes:document.getElementById('f-notes').value.trim(),
+    submitter_name:submitter,submitter_email:email,new_people:_np};
+  // Choose endpoint: edit or new
+  const isEdit=!!_editToken;
+  if(isEdit)data.edit_token=_editToken;
+  const endpoint=isEdit?'/api/submit-edit':'/api/submit-song';
+  btn.disabled=true;btn.textContent=isEdit?'Saving...':'Submitting...';
+  fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(d=>{btn.disabled=false;btn.textContent='Submit Song';
+      if(d.success){
+        _lastSubmitData=data;
+        if(d.edit_token)_editToken=d.edit_token;
+        showReviewScreen(data,isEdit);
+      }
+      else{err.textContent=d.error||'Failed.';err.style.display='block'}
+    }).catch(()=>{btn.disabled=false;btn.textContent='Submit Song';err.textContent='Network error.';err.style.display='block'})}
+
+// ---- REVIEW SCREEN ----
+function showReviewScreen(data,wasEdit){
+  document.getElementById('sf').style.display='none';
+  const ss=document.getElementById('ss');ss.style.display='block';
+  document.getElementById('ss-title').textContent=wasEdit?'Submission Updated!':'Song Submitted!';
+  document.getElementById('ss-subtitle').textContent=wasEdit?'Your changes have been saved.':'Thanks! Celina will review and get back to you.';
+  // Build review summary
+  const rv=document.getElementById('ss-review');
+  let h='';
+  const row=(label,val)=>{if(val)h+=`<div class="rv"><span class="rl">${label}</span><span class="rr">${esc(val)}</span></div>`};
+  const rowLink=(label,val)=>{if(val)h+=`<div class="rv"><span class="rl">${label}</span><span class="rr"><a href="${esc(val)}" target="_blank">${esc(val.length>40?val.substring(0,40)+'...':val)}</a></span></div>`};
+  row('Title',data.title);
+  row('Genre',data.genre);
+  row('Audio Status',data.audio_status);
+  row('BPM',data.bpm);
+  row('Duration',data.duration);
+  row('Songwriters',data.songwriter_credits);
+  row('Producers',data.producer);
+  row('Artists',data.artist);
+  row('Vocalists',data.vocalist);
+  rowLink('Download',data.dropbox_link);
+  rowLink('Lyric Doc',data.lyricdoc);
+  row('Notes',data.notes);
+  if(data.lyrics)h+=`<div class="rv"><span class="rl">Lyrics</span><span class="rr" style="font-size:11px;color:var(--text-dim)">${data.lyrics.split('\\n').length} lines included</span></div>`;
+  rv.innerHTML=h;
+  // Email note
+  const emailNote=document.getElementById('ss-email-note');
+  emailNote.textContent='A confirmation email has been sent to '+data.submitter_email+' with an edit link valid for 24 hours.';
+}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+// ---- EDIT SUBMISSION ----
+function editSubmission(){
+  // Re-show form populated with last submitted data
+  document.getElementById('ss').style.display='none';
+  document.getElementById('sf').style.display='block';
+  if(_lastSubmitData)populateForm(_lastSubmitData);
+  document.getElementById('submit-btn').textContent='Save Changes';
+}
+
+function loadEditMode(token){
+  _editToken=token;
+  fetch('/api/submit-load/'+token).then(r=>r.json()).then(d=>{
+    if(d.success){
+      populateForm(d.data);
+      _lastSubmitData=d.data;
+      // Show edit banner
+      const form=document.getElementById('sf');
+      const banner=document.createElement('div');
+      banner.className='ss-edit-banner';
+      banner.innerHTML=`<p>Editing submission: ${d.title}</p><div class="timer">${d.minutes_remaining} minutes remaining</div>`;
+      form.insertBefore(banner,form.firstChild);
+      document.getElementById('submit-btn').textContent='Save Changes';
+    } else {
+      document.getElementById('form-error').textContent=d.error||'Edit link invalid.';
+      document.getElementById('form-error').style.display='block';
+    }
+  }).catch(()=>{
+    document.getElementById('form-error').textContent='Could not load submission for editing.';
+    document.getElementById('form-error').style.display='block';
+  });
+}
+
+function populateForm(data){
+  document.getElementById('f-submitter').value=data.submitter_name||'';
+  document.getElementById('f-email').value=data.submitter_email||'';
+  document.getElementById('f-title').value=data.title||'';
+  document.getElementById('f-bpm').value=data.bpm||'';
+  document.getElementById('f-duration').value=data.duration||'';
+  document.getElementById('f-audio').value=data.dropbox_link||'';
+  document.getElementById('f-lyricdoc').value=data.lyricdoc||'';
+  document.getElementById('f-lyrics').value=data.lyrics||'';
+  document.getElementById('f-notes').value=data.notes||'';
+  const nb=document.getElementById('notes-btn');
+  if(data.notes){nb.textContent=data.notes.length>50?data.notes.substring(0,50)+'...':data.notes;nb.classList.add('has-notes')}
+  // Status
+  if(data.audio_status)pickStatus(data.audio_status);
+  // Genre pills
+  _pills['pf-genre']=[];
+  if(data.genre)(data.genre.split(' | ')).forEach(g=>{if(g.trim())addPill('pf-genre',g.trim(),false)});
+  // Producer pills
+  _pills['pf-producers']=[];
+  if(data.producer)(data.producer.split(' | ')).forEach(n=>{if(n.trim())addPill('pf-producers',n.trim(),false)});
+  // Artist pills
+  _pills['pf-artists']=[];
+  if(data.artist)(data.artist.split(' | ')).forEach(n=>{if(n.trim())addPill('pf-artists',n.trim(),false)});
+  // Vocalist pills
+  _pills['pf-vocalists']=[];
+  if(data.vocalist)(data.vocalist.split(' | ')).forEach(n=>{if(n.trim())addPill('pf-vocalists',n.trim(),false)});
+  // Writers
+  document.getElementById('writers-list').innerHTML='';
+  if(data.songwriter_credits){
+    data.songwriter_credits.split(' | ').forEach(w=>{
+      const m=w.match(/^(.+?)\s*\(([^)]+)\)$/);
+      if(m)addWriterRow(m[1].trim(),m[2].trim(),false);
+      else if(w.trim())addWriterRow(w.trim(),'',false);
+    });
+  } else {addWriterRow('','',false)}
+}
+
+function resetForm(){document.getElementById('sf').style.display='block';document.getElementById('ss').style.display='none';
+  _editToken=null;_lastSubmitData=null;
+  // Remove edit banner if present
+  document.querySelectorAll('.ss-edit-banner').forEach(b=>b.remove());
+  ['f-title','f-audio','f-lyricdoc','f-lyrics','f-bpm','f-duration'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=''});
+  document.getElementById('f-status').value='Demo';renderStatusPills();
+  document.getElementById('f-notes').value='';
+  const nb=document.getElementById('notes-btn');nb.textContent='Click to add notes...';nb.classList.remove('has-notes');
+  ['pf-genre','pf-producers','pf-artists','pf-vocalists'].forEach(id=>{_pills[id]=[];renderPills(id)});
+  document.getElementById('writers-list').innerHTML='';addWriterRow('','',false);_np.length=0;
+  _splitsConfirmed=false;document.getElementById('splits-status').textContent='';document.getElementById('splits-status').className='splits-status';
+  document.getElementById('submit-btn').textContent='Submit Song'}
+</script>
+</body></html>

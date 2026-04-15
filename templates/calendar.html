@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Calendar{% endblock %}
+{% block content %}
+<div class="page-layout">
+  <div class="page-body" style="margin-left:0;padding:0 16px">
+    <div class="toolbar" style="margin-bottom:8px">
+      <button class="btn" onclick="C.prev()">&#9664;</button>
+      <h2 id="cal-title" style="color:var(--accent);margin:0 12px;min-width:180px;text-align:center;font-size:16px"></h2>
+      <button class="btn" onclick="C.next()">&#9654;</button>
+      <button class="btn" onclick="C.today()">Today</button>
+      <button class="btn" id="cal-btn-filter" onclick="C.toggleFilter()">&#8862; Filter</button>
+      <select id="cal-field" class="prompt-input" style="width:160px;font-size:11px" onchange="C.load()">
+        <option value="release date">Release Date</option>
+        <option value="written date">Written Date</option>
+        <option value="recording date">Recording Date</option>
+        <option value="last modified">Last Modified</option>
+      </select>
+      <div class="toolbar-right"><span class="toolbar-info" id="cal-count"></span></div>
+    </div>
+    <div class="filter-panel" id="cal-filter-panel"></div>
+    <div class="cal-views" id="cal-views" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>
+    <div id="cal-grid" class="cal-grid"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const C={
+  year:new Date().getFullYear(),month:new Date().getMonth(),data:[],headers:[],allCols:[],
+  filters:[],views:{},currentView:'All',
+
+  init(){
+    try{this.views=JSON.parse(localStorage.getItem('rollon_cal_views')||'{}')}catch(e){}
+    this.currentView=localStorage.getItem('rollon_cal_current_view')||'All';
+    if(!this.views['All'])this.views['All']={filters:[]};
+    const saved=this.views[this.currentView];
+    if(saved&&saved.filters&&saved.filters.length)this.filters=[...saved.filters];
+    this.renderViews();this.load();
+  },
+
+  load(){
+    const field=document.getElementById('cal-field').value;
+    let url='/api/songs?per_page=999&sort='+encodeURIComponent(field)+'&dir=asc';
+    this.filters.forEach((f,i)=>{if(f.col)url+='&f'+i+'_col='+encodeURIComponent(f.col)+'&f'+i+'_op='+f.op+'&f'+i+'_val='+encodeURIComponent(f.val||'')});
+    fetch(url).then(r=>r.json()).then(d=>{
+      this.data=d.records||[];this.headers=d.headers||[];
+      this.allCols=(d.headers||[]).map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
+      this.render();this._autoSave();this._updateToolbar();
+    });
+  },
+
+  _autoSave(){
+    this.views[this.currentView]={filters:[...this.filters]};
+    localStorage.setItem('rollon_cal_views',JSON.stringify(this.views));
+    localStorage.setItem('rollon_cal_current_view',this.currentView);
+  },
+
+  _updateToolbar(){
+    const bf=document.getElementById('cal-btn-filter');
+    const n=this.filters.filter(f=>f.col).length;
+    if(bf){if(n){bf.classList.add('btn-active');bf.innerHTML='&#8862; Filter <span class="tb-badge">'+n+'</span>'}
+    else{bf.classList.remove('btn-active');bf.innerHTML='&#8862; Filter'}}
+  },
+
+  toggleFilter(){
+    const p=document.getElementById('cal-filter-panel');p.classList.toggle('open');
+    if(p.classList.contains('open')){
+      if(!this.filters.length)this.filters.push({col:'',op:'contains',val:''});
+      const rf=()=>buildFilterPanelV2('cal-filter-panel',C.allCols,C.headers,C.filters,(f)=>{C.filters=f;C.load();rf()});rf();
+    }
+  },
+
+  render(){
+    const field=document.getElementById('cal-field').value;
+    const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    document.getElementById('cal-title').textContent=months[this.month]+' '+this.year;
+    const firstDay=new Date(this.year,this.month,1).getDay();
+    const dim=new Date(this.year,this.month+1,0).getDate();
+    const now=new Date();
+    const byDate={};let total=0;
+    this.data.forEach(rec=>{
+      let dv='';for(const h of Object.keys(rec)){if(cleanH(h).toLowerCase()===field.toLowerCase()){dv=rec[h]||'';break}}
+      if(!dv)return;const d=new Date(dv);if(isNaN(d.getTime()))return;
+      if(d.getFullYear()===this.year&&d.getMonth()===this.month){
+        const day=d.getDate();if(!byDate[day])byDate[day]=[];
+        let t='',st='';
+        for(const h of Object.keys(rec)){const ch=cleanH(h).toLowerCase();if(ch==='title')t=rec[h]||'';if(ch==='audio status')st=rec[h]||''}
+        byDate[day].push({title:t,status:st,ri:rec._row_index});total++;
+      }
+    });
+    document.getElementById('cal-count').textContent=total+' songs this month';
+    let html='<div class="cal-header">';
+    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{html+='<div class="cal-day-name">'+d+'</div>'});
+    html+='</div><div class="cal-body">';
+    for(let i=0;i<firstDay;i++)html+='<div class="cal-cell cal-empty"></div>';
+    for(let day=1;day<=dim;day++){
+      const isToday=day===now.getDate()&&this.month===now.getMonth()&&this.year===now.getFullYear();
+      const songs=byDate[day]||[];
+      html+='<div class="cal-cell'+(isToday?' cal-today':'')+(songs.length?' cal-has-songs':'')+'">';
+      html+='<div class="cal-date">'+day+'</div>';
+      songs.forEach(s=>{
+        const cls=s.status.toLowerCase().includes('released')?'cal-released':s.status.toLowerCase().includes('mastered')?'cal-mastered':'cal-other';
+        const lbl=s.title.length>18?s.title.substring(0,16)+'...':s.title;
+        html+='<div class="cal-song '+cls+'" onclick="event.stopPropagation();openCalRecord('+s.ri+')" title="'+esc(s.title)+' ('+esc(s.status)+')">'+esc(lbl)+'</div>';
+      });
+      // Click empty area to set a song's date to this day
+      const dateStr=this.year+'-'+String(this.month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+      html+='<div class="cal-add" onclick="event.stopPropagation();C.setDateOnSong(\''+dateStr+'\')" title="Set a song date here">+</div>';
+      html+='</div>';
+    }
+    const tc=firstDay+dim;const rem=7-(tc%7);
+    if(rem<7)for(let j=0;j<rem;j++)html+='<div class="cal-cell cal-empty"></div>';
+    html+='</div>';
+    document.getElementById('cal-grid').innerHTML=html;
+  },
+
+  prev(){this.month--;if(this.month<0){this.month=11;this.year--}this.load()},
+  next(){this.month++;if(this.month>11){this.month=0;this.year++}this.load()},
+  today(){this.year=new Date().getFullYear();this.month=new Date().getMonth();this.load()},
+
+  renderViews(){
+    const el=document.getElementById('cal-views');let html='';
+    Object.keys(this.views).forEach(n=>{
+      const a=n===this.currentView?'active':'';
+      html+='<div class="view-item '+a+'" onclick="C.loadView(\''+escA(n)+'\')">'+esc(n)+'<span class="view-menu-btn" onclick="event.stopPropagation();C.showViewMenu(event,\''+escA(n)+'\')">&#9662;</span></div>';
+    });
+    html+='<div class="view-item" style="color:var(--accent)" onclick="C.saveView()">+ Save view</div>';
+    el.innerHTML=html;
+  },
+  showViewMenu(e,name){
+    document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    const menu=document.createElement('div');menu.className='view-context-menu col-menu';
+    const isDefault=name==='All';
+    menu.innerHTML='<div class="col-menu-item" onclick="C.renameView(\''+escA(name)+'\')"><span class="cm-icon">&#9998;</span> Rename</div><div class="col-menu-item" onclick="C.duplicateView(\''+escA(name)+'\')"><span class="cm-icon">&#8853;</span> Duplicate</div>'+(isDefault?'':'<div class="col-menu-sep"></div><div class="col-menu-item col-menu-danger" onclick="C.deleteView(\''+escA(name)+'\')"><span class="cm-icon">&#128465;</span> Delete</div>');
+    const rect=e.target.getBoundingClientRect();menu.style.left=rect.left+'px';menu.style.top=(rect.bottom+2)+'px';
+    document.body.appendChild(menu);
+    setTimeout(()=>{const h=e2=>{if(!menu.contains(e2.target)){menu.remove();document.removeEventListener('click',h)}};document.addEventListener('click',h)},10)},
+  renameView(old){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    showPromptModal('Rename View',[{label:'New name',placeholder:old,value:old}],(v)=>{
+      if(!v[0]||v[0]===old)return;this.views[v[0]]=this.views[old];delete this.views[old];
+      if(this.currentView===old)this.currentView=v[0];this._autoSave();this.renderViews();toast('Renamed: '+v[0])})},
+  duplicateView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    const nn=name+' copy';this.views[nn]=JSON.parse(JSON.stringify(this.views[name]));this._autoSave();this.renderViews();toast('Duplicated: '+nn)},
+  deleteView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    if(name==='All'){toast('Cannot delete default','error');return}
+    delete this.views[name];if(this.currentView===name){this.currentView='All';this.loadView('All')}
+    this._autoSave();this.renderViews();toast('Deleted: '+name)},
+  loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;
+    localStorage.setItem('rollon_cal_current_view',n);this.filters=v.filters||[];this.renderViews();this.load()},
+  saveView(){showPromptModal('Save Calendar View',[{label:'View name',placeholder:'e.g. EMMMA Releases'}],(v)=>{
+    if(!v[0])return;C.views[v[0]]={filters:[...C.filters]};C.currentView=v[0];C._autoSave();C.renderViews();toast('View saved: '+v[0])})}
+};
+
+function openCalRecord(ri){sessionStorage.setItem('open_record',JSON.stringify({ri:ri,table:'songs'}));window.location.href='/songs'}
+
+C.setDateOnSong=function(dateStr){
+  // Search songs to pick which one to set
+  showPromptModal('Set Date: '+dateStr,[
+    {label:'Search for a song',placeholder:'Type song title...'}
+  ],(v)=>{
+    if(!v[0])return;
+    const q=v[0].trim();
+    // Find song by title search
+    fetch('/api/songs?per_page=999').then(r=>r.json()).then(d=>{
+      const recs=d.records||[];
+      const matches=recs.filter(r=>{
+        let t='';for(const h of Object.keys(r)){if(cleanH(h).toLowerCase()==='title')t=r[h]||''}
+        return t.toLowerCase().includes(q.toLowerCase());
+      }).slice(0,10);
+      if(!matches.length){toast('No songs found matching "'+q+'"','error');return}
+      if(matches.length===1){
+        C._applyDate(matches[0],dateStr);
+      } else {
+        // Show picker
+        const opts=matches.map(m=>{
+          let t='';for(const h of Object.keys(m)){if(cleanH(h).toLowerCase()==='title')t=m[h]||''}
+          return {label:t,value:m._row_index};
+        });
+        showPromptModal('Pick Song',[{label:'Which song?',type:'select',options:opts.map(o=>o.label)}],(v2)=>{
+          const pick=opts.find(o=>o.label===v2[0]);
+          if(pick){const rec=matches.find(m=>m._row_index===pick.value);if(rec)C._applyDate(rec,dateStr)}
+        });
+      }
+    });
+  });
+};
+
+C._applyDate=function(rec,dateStr){
+  const field=document.getElementById('cal-field').value;
+  const rawH=C.headers.find(h=>cleanH(h).toLowerCase()===field.toLowerCase())||field;
+  fetch('/api/songs/update',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({field:rawH,row_index:rec._row_index,value:dateStr})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success){toast('Date set');C.load()}
+    else toast(d.error||'Failed','error');
+  });
+};
+
+C.init();
+</script>
+{% endblock %}

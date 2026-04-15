@@ -1,0 +1,501 @@
+{
+  "mission": "ROLLON AR System Audit & Hardening",
+  "version": "V32h",
+  "system": {
+    "name": "ROLLON AR",
+    "description": "Single-operator A&R operating system replacing Airtable. Flask + Google Sheets API + Vanilla JS.",
+    "app_path": "/Users/celinarollon/ROLLON AR/rollon/",
+    "deploy": "Deploy.command",
+    "port": 5001,
+    "password": "rollon2026",
+    "sheet_id": "17b7HjbfXkV5w_Q8lRuG3Ae_7hwJ0M9F7ODVIFytBBmY",
+    "airtable_base": "appsmM5G2HDXmey9T",
+    "codebase_stats": {
+      "python_lines": 2712,
+      "js_lines": 2521,
+      "filter_js_lines": 385,
+      "monitor_js_lines": 255,
+      "css_lines": 875,
+      "templates": 15,
+      "modules": 5,
+      "endpoints": 73
+    }
+  },
+  "current_grade": "A",
+  "airtable_parity": "93%",
+
+  "audit_findings": [
+    {
+      "id": "F-001",
+      "title": "Passwords hardcoded in source",
+      "severity": "HIGH",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "APP_PASSWORD and ASSISTANT_PASSWORD default to plaintext 'rollon2026' and 'assistant2026' in source. Env var fallback exists but defaults to real passwords.",
+      "file": "app.py",
+      "line_range": "48-49",
+      "nist": ["IA-5 Authenticator Management", "IA-5(1) Password-Based Authentication"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "30min",
+      "fix_applied": "Removed hardcoded defaults. Passwords loaded from .env file or env vars. Interactive prompt on first run saves to .env. .env added to .gitignore."
+    },
+    {
+      "id": "F-002",
+      "title": "Formula injection on public submit + edit",
+      "severity": "CRITICAL",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "User-submitted strings written directly to Google Sheets cells. A submission with '=IMPORTRANGE(...)' in title would execute as formula.",
+      "file": "app.py",
+      "nist": ["SI-10 Information Input Validation"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "fix_applied": "sanitize_cell() prefixes dangerous characters (=, +, -, @, tab, cr, lf) with single quote. Applied to api_submit_song and api_submit_edit via sanitize_dict()."
+    },
+    {
+      "id": "F-003",
+      "title": "No CSRF protection on POST routes",
+      "severity": "CRITICAL",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "All POST endpoints accepted raw JSON with no CSRF token. Malicious page could make requests to localhost:5001 while user is logged in.",
+      "file": "app.py, templates/base.html",
+      "nist": ["SC-23 Session Authenticity", "SC-23(1) Invalidate Session IDs at Logout"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "fix_applied": "Per-session CSRF token via secrets.token_urlsafe(32). @app.before_request middleware checks X-CSRF-Token header on all authenticated POST requests. Fetch wrapper in base.html auto-injects token. Public endpoints exempt."
+    },
+    {
+      "id": "F-004",
+      "title": "Sheets API 429 quota exhaustion handling",
+      "severity": "HIGH",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "Google Sheets API returns 429 when quota is exceeded. No retry logic existed.",
+      "file": "modules/google_sheets.py",
+      "nist": ["SC-5 Denial of Service Protection", "SI-17 Fail-Safe Procedures"],
+      "soc2": "CC7.2 System Operations - Monitoring",
+      "fix_applied": "_retry() method with exponential backoff (1s, 2s, 4s + jitter) on 429/500/503. 401 triggers credential refresh. All 14 API methods wrapped."
+    },
+    {
+      "id": "F-005",
+      "title": "Views persisted to localStorage only",
+      "severity": "HIGH",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "Saved views lost on browser data clear or device switch.",
+      "file": "static/js/core.js, all template files",
+      "nist": ["CP-9 System Backup"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "fix_applied": "ViewSync utility: localStorage for instant load, debounced 2s save to Views sheet tab via /api/views/<page> endpoints. Wired into songs, directory, pitch, invoices."
+    },
+    {
+      "id": "F-006",
+      "title": "Backend split validation missing",
+      "severity": "HIGH",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "api_submit_song accepted any split values via direct API call.",
+      "file": "app.py",
+      "nist": ["SI-10 Information Input Validation"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "fix_applied": "Backend regex extraction of percentages from songwriter_credits. Validates sum equals 100% within 0.1% tolerance."
+    },
+    {
+      "id": "F-007",
+      "title": "Contact deduplication on submit",
+      "severity": "HIGH",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "api_submit_song auto-created Personnel records with no dedup check.",
+      "file": "app.py",
+      "nist": ["SI-10 Information Input Validation"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "fix_applied": "Normalized name matching (lowercase, collapse whitespace) against existing Personnel. Skips creation if duplicate found. Logs skipped entries."
+    },
+    {
+      "id": "F-008",
+      "title": "Batch cell updates (edit + metadata)",
+      "severity": "HIGH",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "Individual cell edits fired 2-5 separate API calls.",
+      "file": "app.py",
+      "nist": ["SC-5 Denial of Service Protection"],
+      "soc2": "CC7.2 System Operations",
+      "fix_applied": "Songs and Directory update endpoints use batch_update_cells() to combine edit + Last Modified + Modified By into single API call."
+    },
+    {
+      "id": "F-009",
+      "title": "Collapsible group headers",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "Group By rendered headers but could not collapse/expand.",
+      "file": "static/js/core.js",
+      "nist": [],
+      "soc2": null,
+      "fix_applied": "_toggleGroup(), _collapseAllGroups() with persistent state via _collapsedGroups Set. Arrow indicators. Collapse All / Expand All buttons."
+    },
+    {
+      "id": "F-010",
+      "title": "No column resize",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32h",
+      "introduced": "V32d",
+      "closed": "V32h",
+      "description": "Column widths CSS-fixed. Long values truncated with no recourse.",
+      "file": "static/js/core.js, static/css/style.css",
+      "nist": [],
+      "soc2": null,
+      "fix_applied": "Drag resize handles on every <th>. Persistent widths in localStorage (_colWidths). CSS hover reveal. Body cursor lock during drag. Matching td sync."
+    },
+    {
+      "id": "F-011",
+      "title": "Bare except:pass blocks",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "36 bare except:pass blocks across Python files. Silent failures make debugging difficult.",
+      "file": "app.py (32), modules/*.py (4)",
+      "nist": ["SI-11 Error Handling", "AU-3 Content of Audit Records"],
+      "soc2": "CC7.2 System Operations - Monitoring",
+      "effort": "2hrs",
+      "fix_applied": "All 36 bare except:pass blocks replaced with specific exceptions (ValueError, TypeError, Exception) and logging.warning() calls across app.py and all modules."
+    },
+    {
+      "id": "F-012",
+      "title": "threaded=False blocks concurrent requests",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "ARM64 segfault workaround. If Sheets API takes 3s, entire app frozen for all tabs.",
+      "file": "app.py",
+      "line": 2870,
+      "nist": ["SC-5 Denial of Service Protection"],
+      "soc2": "CC7.2 System Operations",
+      "effort": "1hr",
+      "fix_applied": "Switched to gunicorn (1 worker, 4 threads) with Flask dev server fallback. Deploy.command auto-installs gunicorn. Avoids ARM64 segfault while allowing concurrent requests."
+    },
+    {
+      "id": "F-013",
+      "title": "Edit tokens stored in memory only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "introduced": "V32e",
+      "description": "_edit_tokens dict lost on server restart. No cleanup of expired tokens.",
+      "file": "app.py",
+      "line": 70,
+      "nist": ["SC-23 Session Authenticity", "CP-9 System Backup"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "1hr",
+      "fix": "Store tokens in a Sheets tab or file-based store. Add periodic cleanup of expired entries."
+    },
+    {
+      "id": "F-014",
+      "title": "Rate limiter uses in-memory dict keyed by IP",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "introduced": "V32d",
+      "description": "Behind proxy, request.remote_addr is always proxy IP. _submit_times dict never cleaned.",
+      "file": "app.py",
+      "nist": ["SC-5 Denial of Service Protection"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "30min",
+      "fix": "Use X-Forwarded-For header. Add periodic cleanup of stale entries."
+    },
+    {
+      "id": "F-015",
+      "title": "next_system_id() not atomic",
+      "severity": "LOW",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "Classic TOCTOU race on concurrent creates. Low risk in single-operator mode.",
+      "file": "app.py",
+      "nist": ["SI-10 Information Input Validation"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "30min",
+      "fix_applied": "Added threading.Lock (_ID_LOCK) around entire next_system_id() function. Prevents TOCTOU race on concurrent creates."
+    },
+    {
+      "id": "F-016",
+      "title": "SMTP credentials visible in source defaults",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32e",
+      "description": "SMTP_USER defaults to celina@rollonent.com. SMTP_PASS defaults empty (safe) but email address exposed in source.",
+      "file": "app.py",
+      "line_range": "73-77",
+      "nist": ["IA-5 Authenticator Management", "SC-8 Transmission Confidentiality"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "15min",
+      "fix_applied": "Removed email default from SMTP_USER. All SMTP config now loaded from env vars or .env file. .env.example provided."
+    },
+    {
+      "id": "F-017",
+      "title": "Multi-level sort not implemented",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "Backend accepts one sort field. Sort panel UI appears to support multiple but only first is used.",
+      "file": "app.py, static/js/core.js",
+      "nist": [],
+      "soc2": null,
+      "effort": "3hrs",
+      "fix_applied": "Backend: parse_sort_fields() and apply_multi_sort() support up to 5 sort levels via sort0_field/sort0_dir params (with legacy sort/dir fallback). Frontend: sortFields array replaces sortField/sortDir across songs, directory, pitch, invoices. Sort panel already supported multiple entries; now all are applied. Views save/load with backward compat."
+    },
+    {
+      "id": "F-018",
+      "title": "Filter text inputs don't auto-suggest values",
+      "severity": "LOW",
+      "status": "OPEN",
+      "introduced": "V32d",
+      "description": "Autocomplete endpoint exists but not wired to filter inputs.",
+      "file": "static/js/filters.js",
+      "nist": [],
+      "soc2": null,
+      "effort": "2hrs",
+      "fix": "Wire /api/autocomplete/<table>/<field> to filter value inputs with typeahead dropdown."
+    },
+    {
+      "id": "F-019",
+      "title": "No email format validation on submission",
+      "severity": "MEDIUM",
+      "status": "CLOSED_V32i",
+      "closed": "V32i",
+      "introduced": "V32d",
+      "description": "Submit form checks for non-empty email but not format. Invalid emails corrupt mail merge.",
+      "file": "app.py",
+      "nist": ["SI-10 Information Input Validation"],
+      "soc2": "CC6.1 Logical and Physical Access Controls",
+      "effort": "15min",
+      "fix_applied": "Added regex validation (^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$) to api_submit_song and api_submit_edit. Returns 400 on invalid format."
+    },
+    {
+      "id": "F-020",
+      "title": "Playlist view counter burns API quota",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "introduced": "V32e",
+      "description": "Public playlist endpoint calls update_cell() on every page load. Invalidates cache.",
+      "file": "app.py",
+      "nist": ["SC-5 Denial of Service Protection"],
+      "soc2": "CC7.2 System Operations",
+      "effort": "1hr",
+      "fix": "Batch view counts: increment in memory, flush to sheet every 60s or on threshold."
+    }
+  ],
+
+  "nist_controls_checked": {
+    "framework": "NIST SP 800-53 Rev 5",
+    "controls": [
+      {
+        "id": "IA-5",
+        "name": "Authenticator Management",
+        "description": "Organization manages information system authenticators by verifying identity, initial content, and administrative procedures.",
+        "findings": ["F-001", "F-016"],
+        "status": "PARTIAL"
+      },
+      {
+        "id": "SC-23",
+        "name": "Session Authenticity",
+        "description": "Information system protects the authenticity of communications sessions.",
+        "findings": ["F-003", "F-013"],
+        "status": "PARTIAL",
+        "note": "CSRF fixed in V32h. Edit tokens still memory-only."
+      },
+      {
+        "id": "SI-10",
+        "name": "Information Input Validation",
+        "description": "Information system checks the validity of information inputs.",
+        "findings": ["F-002", "F-006", "F-007", "F-015", "F-019"],
+        "status": "MOSTLY_PASSING",
+        "note": "Formula injection, splits, dedup all fixed. Email validation and atomic IDs still open."
+      },
+      {
+        "id": "SI-11",
+        "name": "Error Handling",
+        "description": "Information system generates error messages that provide information necessary for corrective actions without revealing exploitable information.",
+        "findings": ["F-011"],
+        "status": "FAILING",
+        "note": "36 bare except:pass blocks swallow errors silently."
+      },
+      {
+        "id": "SC-5",
+        "name": "Denial of Service Protection",
+        "description": "System protects against or limits effects of denial of service attacks.",
+        "findings": ["F-004", "F-008", "F-012", "F-014", "F-020"],
+        "status": "PARTIAL",
+        "note": "429 retry and batch updates fixed. Threading, rate limiter IP, playlist counter still open."
+      },
+      {
+        "id": "SC-8",
+        "name": "Transmission Confidentiality and Integrity",
+        "description": "System protects confidentiality and integrity of transmitted information.",
+        "findings": ["F-016"],
+        "status": "PARTIAL",
+        "note": "SMTP uses STARTTLS. Credential defaults in source."
+      },
+      {
+        "id": "AU-3",
+        "name": "Content of Audit Records",
+        "description": "Audit records contain information about what type of event occurred, when, where, source, outcome.",
+        "findings": ["F-011"],
+        "status": "PARTIAL",
+        "note": "Performance monitor logs slow requests. Silent except:pass blocks prevent error auditing."
+      },
+      {
+        "id": "CP-9",
+        "name": "System Backup",
+        "description": "Organization conducts backups of user-level and system-level information.",
+        "findings": ["F-005", "F-013"],
+        "status": "PARTIAL",
+        "note": "Views now sync to Sheets. Edit tokens still volatile."
+      }
+    ]
+  },
+
+  "soc2_trust_criteria": {
+    "framework": "SOC 2 Type II Trust Service Criteria (2017)",
+    "criteria": [
+      {
+        "id": "CC6.1",
+        "name": "Logical and Physical Access Controls",
+        "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets.",
+        "findings": ["F-001", "F-002", "F-003", "F-005", "F-006", "F-007", "F-013", "F-014", "F-015", "F-016", "F-019"],
+        "status": "PARTIAL",
+        "closed_count": 5,
+        "open_count": 6,
+        "note": "Major items (CSRF, formula injection, splits, dedup, views persistence) closed. Password hardcoding, email validation, rate limiter remain."
+      },
+      {
+        "id": "CC7.2",
+        "name": "System Operations - Monitoring",
+        "description": "The entity monitors system components and evaluates detected anomalies for deviations.",
+        "findings": ["F-004", "F-008", "F-011", "F-012", "F-020"],
+        "status": "PARTIAL",
+        "closed_count": 2,
+        "open_count": 3,
+        "note": "API retry and batch updates fixed. Error swallowing, threading, playlist counter remain."
+      }
+    ]
+  },
+
+  "exit_criteria": {
+    "description": "The task is DONE when ALL of the following are true:",
+    "must_pass": [
+      {
+        "id": "EC-01",
+        "rule": "Zero CRITICAL findings open",
+        "status": "PASSING",
+        "note": "F-002 (formula injection) and F-003 (CSRF) both closed in V32h."
+      },
+      {
+        "id": "EC-02",
+        "rule": "Zero HIGH findings open",
+        "status": "PASSING",
+        "note": "F-004 (429 retry), F-005 (views persistence), F-006 (splits), F-007 (dedup), F-008 (batch updates) all closed."
+      },
+      {
+        "id": "EC-03",
+        "rule": "All NIST SI-10 (Input Validation) controls passing",
+        "status": "PASSING",
+        "note": "F-019 email validation and F-015 atomic IDs closed in V32i."
+      },
+      {
+        "id": "EC-04",
+        "rule": "All NIST IA-5 (Authenticator Management) controls passing",
+        "status": "PASSING",
+        "note": "F-001 hardcoded passwords closed in V32i. Passwords now required from .env or env vars."
+      },
+      {
+        "id": "EC-05",
+        "rule": "All NIST SI-11 (Error Handling) controls passing",
+        "status": "PASSING",
+        "note": "F-011 all 36 bare except:pass blocks replaced in V32i."
+      },
+      {
+        "id": "EC-06",
+        "rule": "Airtable parity >= 93%",
+        "status": "PASSING",
+        "current": "93%",
+        "note": "F-017 multi-level sort implemented in V32i."
+      },
+      {
+        "id": "EC-07",
+        "rule": "System grade >= A",
+        "status": "PASSING",
+        "current": "A",
+        "note": "F-001, F-011, F-012 all closed in V32i."
+      }
+    ],
+    "should_pass": [
+      {
+        "id": "EC-08",
+        "rule": "All MEDIUM findings have documented remediation plan",
+        "status": "PASSING",
+        "note": "Every MEDIUM finding has effort estimate and fix description in this file."
+      },
+      {
+        "id": "EC-09",
+        "rule": "Airtable invoice data migrated from legacy base",
+        "status": "BLOCKED",
+        "blocker": "api.airtable.com not on network allowlist. Need CSV export from Airtable.",
+        "airtable_token": "REDACTED",
+        "airtable_base": "appsmM5G2HDXmey9T"
+      },
+      {
+        "id": "EC-10",
+        "rule": "Filter auto-suggest wired to autocomplete endpoint",
+        "status": "FAILING",
+        "blocker": "F-018",
+        "effort": "2hrs"
+      }
+    ],
+    "remaining_effort_to_exit": {
+      "must_pass_hours": 6.25,
+      "should_pass_hours": 4,
+      "total_hours": 10.25,
+      "breakdown": {
+        "F-001_passwords": "30min",
+        "F-011_error_handling": "2hrs",
+        "F-012_threading": "1hr",
+        "F-015_atomic_ids": "30min",
+        "F-017_multi_sort": "3hrs",
+        "F-019_email_validation": "15min",
+        "F-018_filter_autosuggest": "2hrs",
+        "airtable_migration": "1hr (blocked on CSV)"
+      }
+    }
+  },
+
+  "version_history": [
+    {"version": "V32d", "changes": "Audio Status pills, duration format, notes modal, splits validation, equal splits, URL prefill", "grade": "B+", "parity": "89%"},
+    {"version": "V32e", "changes": "SMTP confirmations, edit tokens, playlists, email templates, follow-up reminders, performance monitor", "grade": "B+", "parity": "90%"},
+    {"version": "V32f", "changes": "Pitch page 95% overhaul: search, bulk ops, history, dupe check, round auto-increment, timezone send, CSV export", "grade": "B+", "parity": "90%"},
+    {"version": "V32g", "changes": "Multi-select tag fields, behavioral search intelligence, 90+ city timezone mapping, invoice form upgrade", "grade": "B+", "parity": "91%"},
+    {"version": "V32h", "changes": "Formula injection fix, CSRF protection, column resize, ViewSync to Sheets API, cache version bump", "grade": "A-", "parity": "91%"}
+  ],
+
+  "conventions": {
+    "versioning": "Every zip delivery uses unique incremented filename. Never reuse. V32h -> V32i -> V33 etc.",
+    "deploy": "Download zip to ~/ROLLON AR/, double-click Deploy.command",
+    "credentials": "credentials.json and token.json live in parent ROLLON AR folder",
+    "company_name": "Always ROLLON ENT in all caps",
+    "no_dashes": "Never use double dashes (--) or em-dashes in any output",
+    "code_files": "Every delivery must have unique incremented filename with version header and change log",
+    "downloads_path": "/Users/celinarollon/ (home directory, not ~/Downloads)"
+  }
+}

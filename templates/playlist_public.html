@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ playlist_name }} | ROLLON ENT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0f0f12;--bg-card:#18181f;--border:#2a2a34;--text:#e8e6e3;--text-dim:#9a9a9f;--text-ghost:#5a5a62;--accent:#d4a853;--font:'DM Sans',sans-serif;--font-b:'Inter',sans-serif;--font-m:'JetBrains Mono',monospace;--r:12px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--font-b);min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 0%,rgba(212,168,83,.06) 0%,transparent 50%);pointer-events:none}
+.container{max-width:700px;margin:0 auto;padding:40px 20px}
+.header{text-align:center;margin-bottom:40px}
+.header h1{font-family:var(--font);font-size:26px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:-.5px}
+.header .desc{color:var(--text-dim);font-size:13px;line-height:1.5;max-width:500px;margin:0 auto}
+.header .meta{font-size:11px;color:var(--text-ghost);margin-top:10px;font-family:var(--font-m)}
+.brand{font-family:var(--font);font-size:12px;letter-spacing:2px;color:var(--accent);font-weight:600;margin-bottom:20px;text-transform:uppercase}
+.song-count{display:inline-block;background:rgba(212,168,83,.1);color:var(--accent);border:1px solid rgba(212,168,83,.2);border-radius:20px;padding:3px 12px;font-size:11px;font-weight:600;margin-top:8px}
+
+.track{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:12px;transition:border-color .2s}
+.track:hover{border-color:rgba(212,168,83,.3)}
+.track-num{font-family:var(--font-m);font-size:10px;color:var(--text-ghost);margin-bottom:6px;letter-spacing:1px}
+.track-title{font-family:var(--font);font-size:18px;font-weight:600;color:var(--text);margin-bottom:8px}
+.track-credits{font-size:12px;color:var(--text-dim);line-height:1.6}
+.track-credits strong{color:var(--text);font-weight:500}
+.track-meta{display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-ghost);font-family:var(--font-m);flex-wrap:wrap}
+.track-meta span{display:flex;align-items:center;gap:4px}
+.track-actions{margin-top:12px;display:flex;gap:8px}
+.track-btn{padding:6px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-dim);transition:all .15s;text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+.track-btn:hover{border-color:var(--accent);color:var(--accent)}
+.track-btn.primary{background:var(--accent);color:#0f0f12;border-color:var(--accent)}
+.track-btn.primary:hover{background:#e0b45e}
+
+.lyrics-toggle{cursor:pointer;color:var(--accent);font-size:11px;font-weight:500;margin-top:8px;display:inline-block}
+.lyrics-box{display:none;margin-top:10px;padding:12px;background:var(--bg);border-radius:8px;font-family:var(--font-m);font-size:11px;line-height:1.7;white-space:pre-wrap;max-height:300px;overflow-y:auto;color:var(--text-dim)}
+
+.footer{text-align:center;padding:40px 0;font-size:11px;color:var(--text-ghost)}
+.footer a{color:var(--accent);text-decoration:none}
+@media(max-width:500px){.container{padding:20px 12px}.track{padding:14px}.track-title{font-size:16px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="brand">ROLLON ENT</div>
+    <h1>{{ playlist_name }}</h1>
+    {% if playlist_desc %}<div class="desc">{{ playlist_desc }}</div>{% endif %}
+    <div class="song-count">{{ songs|length }} track{{ 's' if songs|length != 1 else '' }}</div>
+    <div class="meta">{{ created }} &middot; {{ views }} views</div>
+  </div>
+
+  {% for song in songs %}
+  <div class="track">
+    <div class="track-num">TRACK {{ loop.index }}</div>
+    <div class="track-title">{{ song.get('Title', 'Untitled') }}</div>
+    <div class="track-credits">
+      {% if song.get('Songwriter Credits') %}<div><strong>Writers:</strong> {{ song['Songwriter Credits'] }}</div>{% endif %}
+      {% if song.get('Producer') %}<div><strong>Producer:</strong> {{ song['Producer'] }}</div>{% endif %}
+      {% if song.get('Artist') %}<div><strong>Artist:</strong> {{ song['Artist'] }}</div>{% endif %}
+    </div>
+    <div class="track-meta">
+      {% if song.get('Genre') %}<span>{{ song['Genre'] }}</span>{% endif %}
+      {% if song.get('Audio Status') %}<span>{{ song['Audio Status'] }}</span>{% endif %}
+      {% if song.get('Duration') %}<span>{{ song['Duration'] }}</span>{% endif %}
+      {% if song.get('BPM') %}<span>{{ song['BPM'] }} BPM</span>{% endif %}
+    </div>
+    <div class="track-actions">
+      {% if song.get('Dropbox Link') %}
+      <a class="track-btn primary" href="{{ song['Dropbox Link'] }}" target="_blank">Download Audio</a>
+      {% endif %}
+      {% if song.get('DISCO') %}
+      <a class="track-btn" href="{{ song['DISCO'] }}" target="_blank">DISCO</a>
+      {% endif %}
+    </div>
+    {% if song.get('Lyrics') %}
+    <div class="lyrics-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.textContent=this.nextElementSibling.style.display==='block'?'Hide Lyrics':'Show Lyrics'">Show Lyrics</div>
+    <div class="lyrics-box">{{ song['Lyrics'] }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="footer">
+    Shared via <a href="https://rollonent.com" target="_blank">ROLLON ENT</a>
+  </div>
+</div>
+</body>
+</html>

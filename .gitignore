@@ -1,0 +1,9 @@
+token.json
+credentials.json
+.secret_key
+__pycache__/
+*.pyc
+rollon.log
+.DS_Store
+.env
+migrate_attachments.py

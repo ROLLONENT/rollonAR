@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Invoices{% endblock %}
+{% block content %}
+<div class="page-layout">
+  <div class="page-sidebar" id="inv-sidebar">
+    <div class="sidebar-header">Views</div>
+    <div id="inv-views"></div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-header">Quick Filters</div>
+    <div class="view-item" onclick="I.qf('Status','Draft')">Drafts</div>
+    <div class="view-item" onclick="I.qf('Status','Sent')">Sent</div>
+    <div class="view-item" onclick="I.qf('Status','Paid')">Paid</div>
+    <div class="view-item" onclick="I.qf('Status','Overdue')">Overdue</div>
+  </div>
+  <div class="page-body">
+    <div class="toolbar">
+      <button class="btn btn-accent" onclick="I.newInvoice()">+ New Invoice</button>
+      <button class="btn" id="btn-filter" onclick="I.toggleFilter()">&#8862; Filter</button>
+      <button class="btn" onclick="I.exportCSV()">&#128228; Export</button>
+      <div class="toolbar-right"><span class="toolbar-info" id="invoice-stats"></span></div>
+    </div>
+    <div class="filter-panel" id="filter-panel"></div>
+    <div id="invoice-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:12px 0"></div>
+    <div class="grid-wrap" id="grid-wrap"><div style="padding:8px"><div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:100px;height:14px"></div><div class="skeleton skeleton-cell" style="width:150px;height:14px"></div></div></div></div>
+    <div id="pagination"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const I={
+  invoices:[],headers:[],allCols:[],filters:[],sortFields:[{col:'Date',dir:'desc'}],
+  views:{},currentView:'All',visibleCols:[],
+
+  init(){
+    try{this.views=JSON.parse(localStorage.getItem('rollon_inv_views')||'{}')}catch(e){}
+    this.currentView=localStorage.getItem('rollon_inv_current_view')||'All';
+    if(!this.views['All'])this.views['All']={filters:[],visibleCols:[]};
+    const saved=this.views[this.currentView];
+    if(saved&&saved.filters&&saved.filters.length)this.filters=[...saved.filters];
+    if(saved&&saved.visibleCols&&saved.visibleCols.length)this.visibleCols=[...saved.visibleCols];
+    if(saved&&saved.sorts?.length)this.sortFields=[...saved.sorts];
+    else if(saved&&saved.sort)this.sortFields=[{col:saved.sort,dir:saved.dir||'desc'}];
+    this.renderViews();this.load();
+  },
+
+  _autoSave(){
+    this.views[this.currentView]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};
+    localStorage.setItem('rollon_inv_views',JSON.stringify(this.views));
+    localStorage.setItem('rollon_inv_current_view',this.currentView);
+  },
+
+  load(){
+    let url='/api/invoices?x=1'+sortFieldsToURL(this.sortFields);
+    this.filters.forEach((f,i)=>{if(f.col)url+='&f'+i+'_col='+encodeURIComponent(f.col)+'&f'+i+'_op='+f.op+'&f'+i+'_val='+encodeURIComponent(f.val||'')});
+    fetch(url).then(r=>r.json()).then(d=>{
+      if(d.error){toast(d.error,'error');return}
+      this.headers=d.headers;this.invoices=d.records;window._currentHeaders=d.headers;window._currentTable='invoices';
+      this.allCols=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
+      if(!this.visibleCols.length)this.visibleCols=['Invoice No','Date','Entity','Client','Description','Amount','Currency','Status','Due Date','Category'];
+      document.getElementById('invoice-stats').textContent=d.total+' invoices';
+      this.renderSummary(d.records);
+      const sg=sortFieldsForGrid(this.sortFields);
+      buildGridV2('grid-wrap',d.headers,d.records,'invoices',this.visibleCols,sg.field,sg.dir,(field)=>{
+        this.sortFields=[{col:field,dir:sg.field===field&&sg.dir==='asc'?'desc':'asc'}];this.load()});
+      this._autoSave();this._updateToolbar();
+    }).catch(()=>{document.getElementById('grid-wrap').innerHTML='<div class="loading" style="color:var(--danger)">Failed to load.</div>'});
+  },
+
+  _updateToolbar(){
+    const bf=document.getElementById('btn-filter');
+    const n=this.filters.filter(f=>f.col).length;
+    if(bf){if(n){bf.classList.add('btn-active');bf.innerHTML='&#8862; Filter <span class="tb-badge">'+n+'</span>'}
+    else{bf.classList.remove('btn-active');bf.innerHTML='&#8862; Filter'}}
+  },
+
+  renderSummary(records){
+    const el=document.getElementById('invoice-summary');
+    let total=0,paid=0,outstanding=0,overdue=0;const now=new Date();
+    records.forEach(r=>{
+      const amt=parseFloat((r['Amount']||r['[x] Amount']||'0').toString().replace(/[^0-9.-]/g,''))||0;
+      const status=(r['Status']||r['[x] Status']||'').toString().toLowerCase().trim();
+      total+=amt;
+      if(status==='paid')paid+=amt;
+      else{outstanding+=amt;
+        const due=r['Due Date']||r['[x] Due Date']||'';
+        if(due){try{if(new Date(due)<now)overdue+=amt}catch(e){}}
+      }
+    });
+    const fmt=n=>'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    el.innerHTML='<div class="stat-card"><div class="stat-label">Total Invoiced</div><div class="stat-value">'+fmt(total)+'</div></div><div class="stat-card"><div class="stat-label">Paid</div><div class="stat-value" style="color:var(--success)">'+fmt(paid)+'</div></div><div class="stat-card"><div class="stat-label">Outstanding</div><div class="stat-value" style="color:var(--accent)">'+fmt(outstanding)+'</div></div><div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value" style="color:var(--danger)">'+fmt(overdue)+'</div></div>';
+  },
+
+  toggleFilter(){const p=document.getElementById('filter-panel');p.classList.toggle('open');
+    if(p.classList.contains('open')){if(!this.filters.length)this.filters.push({col:'',op:'contains',val:''});
+    const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.load();rf()});rf()}},
+
+  qf(col,val){this.filters=[{col,op:'is',val}];this.load();
+    document.getElementById('filter-panel').classList.add('open');
+    const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.load();rf()});rf()},
+
+  newInvoice(){
+    const today=new Date().toISOString().split('T')[0];
+    showPromptModal('New Invoice',[
+      {label:'Entity',type:'select',options:['ROLLON ENT','RESTLESS YOUTH'],value:'ROLLON ENT'},
+      {label:'Client (search Personnel)',placeholder:'Type to search...'},
+      {label:'Description',placeholder:'e.g. April 2026 Consultancy Fee'},
+      {label:'Amount',placeholder:'e.g. 5000.00'},
+      {label:'Currency',type:'select',options:['USD','GBP','EUR','AUD','CAD'],value:'USD'},
+      {label:'Category',type:'select',options:['Management','A&R','Tour Management','Commission','Sync','Other']},
+    ],(v)=>{
+      if(!v[1]||!v[3]){toast('Client and Amount required','error');return}
+      const entity=v[0]||'ROLLON ENT';
+      const prefix=entity==='RESTLESS YOUTH'?'RYE':'ROL';
+      fetch('/api/invoices/new',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          'Entity':entity,'Client':v[1],'Description':v[2],
+          'Amount':v[3],'Currency':v[4]||'USD','Category':v[5]||'Other',
+          'Date':today,'Status':'Draft','_auto_number':prefix
+        })
+      }).then(r=>r.json()).then(d=>{
+        if(d.success){toast('Invoice created'+(d.invoice_no?': '+d.invoice_no:''));this.load()}
+        else toast(d.error||'Failed','error')})})
+  },
+
+  renderViews(){const el=document.getElementById('inv-views');let html='';
+    Object.keys(this.views).forEach(n=>{
+      const a=n===this.currentView?'active':'';
+      html+='<div class="view-item '+a+'" onclick="I.loadView(\''+escA(n)+'\')">'+esc(n)+'<span class="view-menu-btn" onclick="event.stopPropagation();I.showViewMenu(event,\''+escA(n)+'\')">&#9662;</span></div>'});
+    html+='<div class="view-item" style="color:var(--accent)" onclick="I.saveView()">+ Save view</div>';el.innerHTML=html},
+
+  showViewMenu(e,name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    const menu=document.createElement('div');menu.className='view-context-menu col-menu';
+    const isDefault=name==='All';
+    menu.innerHTML='<div class="col-menu-item" onclick="I.renameView(\''+escA(name)+'\')"><span class="cm-icon">&#9998;</span> Rename</div><div class="col-menu-item" onclick="I.duplicateView(\''+escA(name)+'\')"><span class="cm-icon">&#8853;</span> Duplicate</div>'+(isDefault?'':'<div class="col-menu-sep"></div><div class="col-menu-item col-menu-danger" onclick="I.deleteView(\''+escA(name)+'\')"><span class="cm-icon">&#128465;</span> Delete</div>');
+    const rect=e.target.getBoundingClientRect();menu.style.left=rect.left+'px';menu.style.top=(rect.bottom+2)+'px';
+    document.body.appendChild(menu);setTimeout(()=>{const h=e2=>{if(!menu.contains(e2.target)){menu.remove();document.removeEventListener('click',h)}};document.addEventListener('click',h)},10)},
+  renameView(old){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());showPromptModal('Rename',[{label:'New name',value:old}],(v)=>{if(!v[0]||v[0]===old)return;this.views[v[0]]=this.views[old];delete this.views[old];if(this.currentView===old)this.currentView=v[0];this._autoSave();this.renderViews();toast('Renamed')})},
+  duplicateView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());this.views[name+' copy']=JSON.parse(JSON.stringify(this.views[name]));this._autoSave();this.renderViews();toast('Duplicated')},
+  deleteView(name){document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());if(name==='All')return;delete this.views[name];if(this.currentView===name){this.currentView='All';this.loadView('All')}this._autoSave();this.renderViews();toast('Deleted')},
+  loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;localStorage.setItem('rollon_inv_current_view',n);this.filters=v.filters||[];if(v.visibleCols&&v.visibleCols.length)this.visibleCols=[...v.visibleCols];if(v.sorts?.length)this.sortFields=[...v.sorts];else if(v.sort)this.sortFields=[{col:v.sort,dir:v.dir||'desc'}];else this.sortFields=[{col:'Date',dir:'desc'}];this.renderViews();this.load()},
+  saveView(){showPromptModal('Save Invoice View',[{label:'View name',placeholder:'e.g. Overdue'}],(v)=>{if(!v[0])return;this.views[v[0]]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};this.currentView=v[0];this._autoSave();this.renderViews();toast('Saved: '+v[0])})},
+
+  exportCSV(){
+    if(!this.invoices.length){toast('No invoices','error');return}
+    const cols=['Invoice No','Date','Entity','Client','Description','Amount','Currency','Status','Due Date','Category','Notes'];
+    let csv='\uFEFF'+cols.map(c=>'"'+c+'"').join(',')+'\n';
+    this.invoices.forEach(rec=>{csv+=cols.map(c=>{const rh=this.headers.find(h=>cleanH(h)===c)||c;return '"'+((rec[rh]||'').toString().replace(/"/g,'""'))+'"'}).join(',')+'\n'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download='rollon_invoices_'+new Date().toISOString().split('T')[0]+'.csv';a.click();toast('Exported')
+  }
+};
+
+window.openRecord=function(ri,table){
+  if(table==='invoices'){
+    fetch('/api/invoices/'+ri).then(r=>r.json()).then(rec=>{
+      renderDetailModal(rec,I.headers,'invoices');
+      setTimeout(()=>{
+        const actions=document.querySelector('.detail-actions');
+        if(actions){
+          // Print Invoice button (always visible)
+          const printBtn=document.createElement('button');printBtn.className='btn';printBtn.textContent='Print / PDF';
+          printBtn.onclick=()=>{window.open('/invoices/print/'+ri,'_blank')};
+          actions.insertBefore(printBtn,actions.firstChild);
+          const status=(rec['Status']||rec['[x] Status']||'').toString().toLowerCase();
+          if(status!=='paid'){
+            const btn=document.createElement('button');btn.className='btn btn-accent';btn.textContent='Mark as Paid';
+            btn.onclick=()=>{fetch('/api/invoices/mark-paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_index:ri})}).then(r=>r.json()).then(d=>{if(d.success){toast('Paid');I.load();document.getElementById('detail-modal')?.remove()}else toast(d.error||'Failed','error')})};
+            actions.appendChild(btn)}
+          if(status==='draft'){
+            const btn2=document.createElement('button');btn2.className='btn';btn2.textContent='Mark as Sent';
+            btn2.onclick=()=>{fetch('/api/invoices/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field:'Status',row_index:ri,value:'Sent'})}).then(r=>r.json()).then(d=>{if(d.success){toast('Sent');I.load();document.getElementById('detail-modal')?.remove()}else toast(d.error||'Failed','error')})};
+            actions.appendChild(btn2)}
+        }
+      },100);
+    })}};
+window.reload=function(){I.load()};
+I.init();
+</script>
+{% endblock %}

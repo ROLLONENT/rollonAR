@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Directory{% endblock %}
+{% block content %}
+<div class="page-layout">
+  <div class="page-sidebar">
+    <div class="sidebar-header">Views</div>
+    <div id="views-list"></div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-header">Pitch Filters</div>
+    <div class="view-item" onclick="D.pf('Dance')">Dance Pitch</div>
+    <div class="view-item" onclick="D.pf('Pop')">Pop Pitch</div>
+    <div class="view-item" onclick="D.pf('KPOP')">KPOP Pitch</div>
+    <div class="view-item" onclick="D.pf('SSW')">Singer-Songwriter</div>
+    <div class="view-item" onclick="D.pf('Sync')">Sync Pitch</div>
+    <div class="view-item" onclick="D.pf('WritingTrip')">Writing Trip</div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-header">By Role</div>
+    <div class="view-item" onclick="D.qf('field','MGMT')">MGMT</div>
+    <div class="view-item" onclick="D.qf('field','Record A&R')">Record A&amp;R</div>
+    <div class="view-item" onclick="D.qf('field','Publishing A&R')">Publishing A&amp;R</div>
+    <div class="view-item" onclick="D.qf('field','Artist')">Artists</div>
+    <div class="view-item" onclick="D.qf('field','Creative')">Creatives</div>
+    <div class="view-item" onclick="D.qf('tags','Celina Relationship')">Celina Relationship</div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-header">Group By</div>
+    <div class="view-item" onclick="D.setGroup('Field')">Role</div>
+    <div class="view-item" onclick="D.setGroup('Genre')">Genre</div>
+    <div class="view-item" onclick="D.setGroup('City')">City</div>
+    <div class="view-item" onclick="D.setGroup('Countries')">Country</div>
+    <div class="view-item" onclick="D.setGroup('')">No Group</div>
+  </div>
+  <div class="page-body">
+    <div class="toolbar">
+      <div style="position:relative"><input class="toolbar-search" id="search-input" placeholder="Search directory..."></div>
+      <button class="btn" id="btn-filter" onclick="D.toggleFilter()">⊞ Filter</button>
+      <div style="position:relative">
+        <button class="btn" id="btn-fields" onclick="D.toggleFields()">⊟ Fields</button>
+        <div class="fields-panel" id="fields-panel"></div>
+      </div>
+      <button class="btn" id="btn-sort" onclick="D.showSortPanel()">↕ Sort</button>
+      <button class="btn" id="btn-group" onclick="D.showGroupPanel()">▦ Group</button>
+      <button class="btn btn-accent" onclick="D.newRecord()">+ New Contact</button>
+      <button class="btn" id="pitch-btn" onclick="D.sendToPitch()" style="display:none">🚀 Send to Pitch</button>
+      <button class="btn btn-sm" onclick="showImportDialog('directory')" title="Import CSV">📥</button>
+      <button class="btn btn-sm" onclick="exportViewCSV('directory')" title="Export current view">📤</button>
+      <button class="btn btn-sm" onclick="togglePillColors()" title="Toggle pill colors">🎨</button>
+      <div class="toolbar-right"><span class="toolbar-info" id="record-count"></span></div>
+    </div>
+    <div class="bulk-bar" id="bulk-bar">
+      <span class="bulk-count">0 selected</span>
+      <span class="bulk-select-all" id="select-all-filtered" onclick="selectAllFiltered('directory')" style="display:none">Select all results</span>
+      <button class="btn btn-sm" onclick="bulkAction('add_tag','directory')">+ Tag</button>
+      <button class="btn btn-sm" onclick="bulkAction('remove_tag','directory')">- Tag</button>
+      <button class="btn btn-sm" onclick="bulkAction('add_field','directory')">+ Add to Field</button>
+      <button class="btn btn-sm" onclick="bulkAction('remove_field','directory')">- Remove from Field</button>
+      <button class="btn btn-sm" onclick="bulkAction('set_field','directory')">= Set Field</button>
+      <button class="btn btn-sm btn-danger" onclick="bulkAction('delete','directory')">🗑 Delete</button>
+      <button class="btn btn-sm" onclick="window._selectedRows.clear();updateBulkBar();reload()">Clear</button>
+    </div>
+    <div class="filter-panel" id="filter-panel"></div>
+    <div class="sort-panel" id="sort-panel"></div>
+    <div class="filter-panel" id="group-panel"></div>
+    <div class="grid-wrap" id="grid-wrap"><div style="padding:8px">
+      <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:200px;height:14px"></div><div class="skeleton skeleton-cell" style="width:150px;height:14px"></div><div class="skeleton skeleton-cell" style="width:100px;height:14px"></div><div class="skeleton skeleton-cell" style="width:120px;height:14px"></div></div>
+      <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:180px;height:14px"></div><div class="skeleton skeleton-cell" style="width:130px;height:14px"></div><div class="skeleton skeleton-cell" style="width:90px;height:14px"></div><div class="skeleton skeleton-cell" style="width:140px;height:14px"></div></div>
+      <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:220px;height:14px"></div><div class="skeleton skeleton-cell" style="width:160px;height:14px"></div><div class="skeleton skeleton-cell" style="width:110px;height:14px"></div><div class="skeleton skeleton-cell" style="width:100px;height:14px"></div></div>
+    </div></div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const D={page:1,perPage:999,search:'',sortFields:[],filters:[],allCols:[],visibleCols:[],
+  headers:[],currentView:'All',views:{},lastRecords:[],group:'',groupDir:'asc',
+
+  init(){
+    setupSearchAutosuggest('search-input','directory');
+    try{this.views=JSON.parse(localStorage.getItem('rollon_dir_views')||'{}')}catch(e){}
+    this.currentView=localStorage.getItem('rollon_dir_current_view')||'All';
+    if(!this.views['All'])this.views['All']={filters:[],visibleCols:[],sorts:[],sort:'',dir:'asc'};
+    const saved=this.views[this.currentView];
+    if(saved&&saved.visibleCols?.length)this.visibleCols=[...saved.visibleCols];
+    if(saved&&saved.sorts?.length)this.sortFields=[...saved.sorts];
+    else if(saved&&saved.sort)this.sortFields=[{col:saved.sort,dir:saved.dir||'asc'}];
+    if(saved&&saved.filters?.length)this.filters=[...saved.filters];
+    this.renderViews();
+    fetch('/api/directory/tags').then(r=>r.json()).then(d=>{
+      this.allCols=d.columns||[];
+      if(!this.visibleCols.length){
+        const df=['Name','Field','Tags','Genre','City','Email','Record Label','MGMT Company','Publishing Company','Last Outreach','Works With'];
+        this.visibleCols=df.filter(c=>this.allCols.includes(c));
+        if(!this.visibleCols.length)this.visibleCols=this.allCols.slice(0,10);
+      }
+    });
+    this.load();
+    let deb;document.getElementById('search-input').addEventListener('input',e=>{
+      clearTimeout(deb);deb=setTimeout(()=>{this.search=e.target.value;this.page=1;this.load()},300)});
+  },
+
+  _autoSave(){
+    if(!this.visibleCols.length)return;
+    this.views[this.currentView]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields],group:this.group||'',groupDir:this.groupDir||'asc'};
+    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));
+    localStorage.setItem('rollon_dir_current_view',this.currentView);
+  },
+
+  load(){
+    let url=`/api/directory?page=${this.page}&per_page=${this.perPage}`;
+    if(this.search)url+=`&search=${encodeURIComponent(this.search)}`;
+    url+=sortFieldsToURL(this.sortFields);
+    if(this.group)url+=`&group=${encodeURIComponent(this.group)}`;
+    if(window._filterMode==='or')url+=`&filter_mode=or`;
+    this.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
+    fetch(url).then(r=>r.json()).then(d=>{
+      if(d.error){toast(d.error,'error');return}
+      this.headers=d.headers;this.lastRecords=d.records;window._currentHeaders=d.headers;
+      document.getElementById('record-count').textContent=`${d.total} contacts`;
+      if(!this.visibleCols.length){
+        const ac=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
+        this.visibleCols=ac.slice(0,10);this.allCols=ac;
+      }
+      document.getElementById('pitch-btn').style.display=this.filters.length>0?'':'none';
+      const sg=sortFieldsForGrid(this.sortFields);
+      const onSort=(field)=>{this.sortFields=[{col:field,dir:sg.field===field&&sg.dir==='asc'?'desc':'asc'}];this.load()};
+      if(this.group&&d.records.length>0){
+        buildGroupedGrid('grid-wrap',d.headers,d.records,'directory',this.visibleCols,this.group,sg.field,sg.dir,onSort,this.groupDir);
+      } else {
+        buildGridV2('grid-wrap',d.headers,d.records,'directory',this.visibleCols,sg.field,sg.dir,onSort,window._selectedRows);
+      }
+      buildPagination('pagination',d.page,d.total_pages,d.total,(p)=>{this.page=p;this.load()});
+      this._autoSave();
+      this._updateToolbar();
+    }).catch(()=>{document.getElementById('grid-wrap').innerHTML='<div class="loading" style="color:var(--danger)">Failed to load.</div>'});
+  },
+
+  _updateToolbar(){
+    const bf=document.getElementById('btn-filter');
+    const bs=document.getElementById('btn-sort');
+    const bg=document.getElementById('btn-group');
+    const activeFilters=this.filters.filter(f=>f.col).length;
+    if(bf){
+      if(activeFilters){bf.classList.add('btn-active');bf.innerHTML='⊞ Filter <span class="tb-badge">'+activeFilters+'</span>'}
+      else{bf.classList.remove('btn-active');bf.innerHTML='⊞ Filter'}
+    }
+    if(bs){
+      const sm=sortFieldsSummary(this.sortFields);
+      if(sm){bs.classList.add('btn-active');bs.innerHTML='\u2195 '+sm}
+      else{bs.classList.remove('btn-active');bs.innerHTML='\u2195 Sort'}
+    }
+    if(bg){
+      if(this.group){bg.classList.add('btn-active');bg.innerHTML='\u25A6 '+this.group}
+      else{bg.classList.remove('btn-active');bg.innerHTML='\u25A6 Group'}
+    }
+  },
+
+  toggleFilter(){const p=document.getElementById('filter-panel');p.classList.toggle('open');
+    if(p.classList.contains('open')){if(!this.filters.length)this.filters.push({col:'',op:'contains',val:''});
+    const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.page=1;this.load();rf()});rf()}},
+
+  toggleFields(){const p=document.getElementById('fields-panel');p.classList.toggle('open');
+    if(p.classList.contains('open'))buildFieldsPanel('fields-panel',this.allCols,this.visibleCols,(vc)=>{this.visibleCols=vc;this.load()})},
+
+  showSortPanel(){
+    const p=document.getElementById('sort-panel');p.classList.toggle('open');
+    if(p.classList.contains('open')){
+      if(!this._sorts||!this._sorts.length)this._sorts=this.sortFields.length?[...this.sortFields]:[{col:'',dir:'asc'}];
+      buildSortPanelV2('sort-panel',this.allCols,this.headers,this._sorts,(sorts)=>{
+        this._sorts=sorts;this.sortFields=sorts.filter(s=>s.col);
+        this.page=1;this.load()});
+    }},
+
+  showGroupPanel(){
+    const panel=document.getElementById('group-panel');
+    panel.classList.toggle('open');
+    if(panel.classList.contains('open')){this._renderGroupPanel()}
+  },
+
+  _renderGroupPanel(){
+    const panel=document.getElementById('group-panel');if(!panel)return;
+    const current=this.group||'';
+    let html=`<div class="filter-header" style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:11px;color:var(--text-secondary);font-weight:600">Group by</span><span class="filter-remove" onclick="document.getElementById('group-panel').classList.remove('open')" style="cursor:pointer;font-size:16px">✕</span></div>`;
+    html+=`<div class="filter-row">`;
+    html+=`<div style="position:relative;flex:1"><input class="filter-field-search" id="dir-group-field" value="${esc(current)}" placeholder="Search field..." onclick="togglePfDD('dgroup')" oninput="filterDirGroupDD()">`;
+    html+=`<div class="filter-field-dd" id="pfdd-dgroup" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:250px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:50">`;
+    html+=`<div class="typeahead-item" data-val="" onclick="D.setGroup('')" style="color:var(--text-ghost)">(No grouping)</div>`;
+    this.allCols.forEach(c=>{html+=`<div class="typeahead-item" data-val="${escA(c)}" onclick="D.setGroup('${escA(c)}')">${esc(c)}</div>`});
+    html+=`</div></div>`;
+    html+=`<select onchange="D.groupDir=this.value;D.load()" style="flex:0 0 auto;width:100px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:5px 8px;color:var(--text);font-size:11px">`;
+    html+=`<option value="asc" ${(this.groupDir||'asc')==='asc'?'selected':''}>A → Z</option>`;
+    html+=`<option value="desc" ${this.groupDir==='desc'?'selected':''}>Z → A</option>`;
+    html+=`</select>`;
+    if(current)html+=`<span class="filter-remove" onclick="D.setGroup('')">🗑</span>`;
+    html+=`</div>`;
+    panel.innerHTML=html;
+  },
+
+  setGroup(field){this.group=field;this.page=1;if(!field)document.getElementById('group-panel')?.classList.remove('open');this.load();if(field)this._renderGroupPanel()},
+
+  qf(col,val){this.filters=[{col,op:col.toLowerCase().includes('tag')?'contains_any':'contains',val}];this.page=1;
+    document.getElementById('filter-panel').classList.add('open');this.load();
+    const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.page=1;this.load();rf()});rf()},
+
+  pf(type){
+    const tm={'Dance':'Dance Pitch','Pop':'Pop Pitch','KPOP':'KPOP Pitch',
+      'SSW':'Singer-Songwriter Pitch','Sync':'Sync Pitch','WritingTrip':'Writing Trip'};
+    const tag=tm[type]||type;
+    this.filters=[{col:'Tags',op:'contains_any',val:tag},{col:'Tags',op:'does_not_contain',val:'Dont Pitch'},
+      {col:'Tags',op:'does_not_contain',val:'Need Email'},{col:'Tags',op:'does_not_contain',val:'Blocked'}];
+    // Field filter: match specific field types for each pitch category
+    if(type==='Sync')this.filters.unshift({col:'Field',op:'contains_any',val:'Sync,Music Supervisor'});
+    else this.filters.unshift({col:'Field',op:'contains_any',val:'MGMT,Record A&R,Publishing A&R'});
+    this.page=1;document.getElementById('filter-panel').classList.add('open');this.load();
+    const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.page=1;this.load();rf()});rf()},
+
+  groupBy(field){this.group=field;this.page=1;this.perPage=999;this.load()},
+
+  renderViews(){const el=document.getElementById('views-list');let html='';
+    Object.keys(this.views).forEach(n=>{
+      const isActive=n===this.currentView?'active':'';
+      html+=`<div class="view-item ${isActive}" onclick="D.loadView('${escA(n)}')">${esc(n)}<span class="view-menu-btn" onclick="event.stopPropagation();D.showViewMenu(event,'${escA(n)}')">▾</span></div>`});
+    html+='<div class="view-item" style="color:var(--accent)" onclick="D.saveView()">+ Save view</div>';el.innerHTML=html},
+
+  showViewMenu(e,name){
+    document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    const menu=document.createElement('div');menu.className='view-context-menu col-menu';
+    const isDefault=name==='All';
+    menu.innerHTML=`
+      <div class="col-menu-item" onclick="D.renameView('${escA(name)}')"><span class="cm-icon">✏</span> Rename view</div>
+      <div class="col-menu-item" onclick="D.duplicateView('${escA(name)}')"><span class="cm-icon">⊕</span> Duplicate view</div>
+      <div class="col-menu-item" onclick="exportViewCSV('directory')"><span class="cm-icon">📤</span> Download CSV</div>
+      ${isDefault?'':`<div class="col-menu-sep"></div><div class="col-menu-item col-menu-danger" onclick="D.deleteView('${escA(name)}')"><span class="cm-icon">🗑</span> Delete view</div>`}`;
+    const rect=e.target.getBoundingClientRect();
+    menu.style.left=rect.left+'px';menu.style.top=(rect.bottom+2)+'px';
+    document.body.appendChild(menu);
+    setTimeout(()=>{const h=e2=>{if(!menu.contains(e2.target)){menu.remove();document.removeEventListener('click',h)}};document.addEventListener('click',h)},10)},
+
+  renameView(oldName){
+    document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    showPromptModal('Rename View',[{label:'New name',placeholder:oldName,value:oldName}],(v)=>{
+      if(!v[0]||v[0]===oldName)return;
+      this.views[v[0]]=this.views[oldName];delete this.views[oldName];
+      if(this.currentView===oldName)this.currentView=v[0];
+      localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Renamed: '+v[0])})},
+
+  duplicateView(name){
+    document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    const newName=name+' copy';
+    this.views[newName]=JSON.parse(JSON.stringify(this.views[name]));
+    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Duplicated: '+newName)},
+
+  deleteView(name){
+    document.querySelectorAll('.view-context-menu').forEach(m=>m.remove());
+    if(name==='All'){toast('Cannot delete default view','error');return}
+    delete this.views[name];
+    if(this.currentView===name){this.currentView='All';this.loadView('All')}
+    localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('Deleted: '+name)},
+
+  loadView(n){const v=this.views[n];if(!v)return;this.currentView=n;
+    localStorage.setItem('rollon_dir_current_view',n);
+    this.filters=v.filters||[];
+    if(v.visibleCols?.length)this.visibleCols=[...v.visibleCols];
+    if(v.sorts?.length)this.sortFields=[...v.sorts];
+    else if(v.sort)this.sortFields=[{col:v.sort,dir:v.dir||'asc'}];
+    else this.sortFields=[];
+    this._sorts=null;
+    this.group=v.group||'';this.groupDir=v.groupDir||'asc';
+    this.page=1;this.renderViews();this.load()},
+
+  saveView(){showPromptModal('Save View',[{label:'View name',placeholder:'My view'}],(v)=>{
+    if(!v[0])return;const n=v[0];
+    this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sorts:[...this.sortFields]};
+    this.currentView=n;localStorage.setItem('rollon_dir_views',JSON.stringify(this.views));this.renderViews();toast('View saved: '+n)})},
+
+  newRecord(){showPromptModal('New Contact',[
+    {label:'Name (required)',placeholder:'Full name'},
+    {label:'Email',placeholder:'email@example.com'},
+    {label:'Field',placeholder:'A&R, MGMT, Sync...',type:'select',options:['Record A&R','A&R','MGMT','Publishing A&R','Agent','Music Supervisor','Sync','Publicist','Artist','Producer','Songwriter','Creative']},
+    {label:'City',placeholder:'Los Angeles, London...'},
+  ],(v)=>{
+    if(!v[0]||!v[0].trim()){toast('Name is required','error');return}
+    const data={Name:v[0].trim()};
+    if(v[1])data['Email']=v[1].trim();
+    if(v[2])data['Field']=v[2];
+    if(v[3])data['City']=v[3].trim();
+    fetch('/api/directory/new',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
+        if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load();
+          setTimeout(()=>{
+            fetch(`/api/search-record?q=${encodeURIComponent(v[0])}`).then(r=>r.json()).then(sr=>{
+              const matches=(sr.results||[]).filter(r=>r.table==='Personnel'&&r.name===v[0]);
+              const match=matches.sort((a,b)=>b.row_index-a.row_index)[0];
+              if(match){pushNav(match.row_index,'directory');
+                fetch(`/api/directory/${match.row_index}`).then(r=>r.json()).then(rec=>{
+                  renderDetailModal(rec,this.headers,'directory')});}
+            });
+          },500);
+        } else toast(d.error||'Failed','error')})})},
+
+  sendToPitch(){
+    const nameH=this.headers.find(h=>cleanH(h).toLowerCase()==='name');
+    const emailH=this.headers.find(h=>cleanH(h).toLowerCase()==='email');
+    const cityH=this.headers.find(h=>cleanH(h).toLowerCase()==='city');
+    const contacts=this.lastRecords.map(r=>({name:nameH?r[nameH]:'',email:emailH?r[emailH]:'',city:cityH?r[cityH]:'',row_index:r._row_index})).filter(c=>c.email);
+    sessionStorage.setItem('pitch_contacts',JSON.stringify(contacts));
+    window.location.href='/pitch?from=directory';
+  }
+};
+
+window.openRecord=function(ri,table){
+  pushNav(ri,table||'directory');
+  const cached=cacheGet(ri);
+  if(cached){renderDetailModal(cached,D.headers,'directory');
+    fetch(`/api/directory/${ri}`).then(r=>r.json()).then(rec=>{renderDetailModal(rec,D.headers,'directory')}).catch(()=>{})}
+  else fetch(`/api/directory/${ri}`).then(r=>r.json()).then(rec=>{renderDetailModal(rec,D.headers,'directory')}).catch(()=>toast('Failed to open','error'))};window.reload=function(){D.load()};
+function filterDirGroupDD(){
+  const inp=document.getElementById('dir-group-field');
+  const dd=document.getElementById('pfdd-dgroup');if(!inp||!dd)return;
+  const q=inp.value.toLowerCase();
+  dd.querySelectorAll('.typeahead-item').forEach(el=>{el.style.display=(el.dataset.val||'').toLowerCase().includes(q)?'':'none'});
+  dd.style.display='block';
+}
+D.init();
+</script>
+{% endblock %}

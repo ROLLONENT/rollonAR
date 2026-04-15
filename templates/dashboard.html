@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Dashboard{% endblock %}
+{% block content %}
+<div class="dashboard">
+  <h1 style="font-size:22px;font-weight:700;color:var(--accent);font-family:var(--font-d)">ROLLON AR</h1>
+  <p style="color:var(--text-dim);font-size:13px;margin-top:2px">A&amp;R Operating System <span style="color:var(--text-ghost);font-size:11px;margin-left:12px">Cmd+K command palette</span></p>
+
+  <div class="dash-actions" style="display:flex;gap:8px;margin:16px 0;flex-wrap:wrap">
+    <a href="/songs" class="dash-action-btn">Songs</a>
+    <a href="/directory" class="dash-action-btn">Directory</a>
+    <a href="/pitch" class="dash-action-btn">Pitch Builder</a>
+    <a href="/submit" class="dash-action-btn" target="_blank">Submit Form</a>
+    <a href="/invoices" class="dash-action-btn">Invoices</a>
+    <a href="/settings" class="dash-action-btn" style="border-color:var(--border);color:var(--text-dim)">Settings</a>
+  </div>
+
+  <div id="dash-priorities" style="margin-bottom:16px"></div>
+
+  <div class="dash-cards">
+    <a href="/songs" class="dash-card" style="text-decoration:none;color:inherit">
+      <h3>Song Library</h3>
+      <div class="dash-num">{{ song_count }}</div>
+      <p>tracks catalogued</p>
+    </a>
+    <a href="/directory" class="dash-card" style="text-decoration:none;color:inherit">
+      <h3>Directory</h3>
+      <div class="dash-num">{{ personnel_count }}</div>
+      <p>contacts</p>
+    </a>
+    <a href="/pitch" class="dash-card" style="text-decoration:none;color:inherit">
+      <h3>Pitch Builder</h3>
+      <div class="dash-num">6</div>
+      <p>pitch types</p>
+    </a>
+    <a href="/calendar" class="dash-card" style="text-decoration:none;color:inherit">
+      <h3>Calendar</h3>
+      <div class="dash-num" id="dash-released">-</div>
+      <p>released tracks</p>
+    </a>
+  </div>
+
+  <div class="dash-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="dash-chart" id="chart-status"><h3>Songs by Audio Status</h3><div class="loading"><span class="spinner"></span></div></div>
+    <div class="dash-chart" id="chart-upcoming"><h3>Upcoming Releases</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
+
+  <div class="dash-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="dash-chart" id="chart-field"><h3>Directory by Field Type</h3><div class="loading"><span class="spinner"></span></div></div>
+    <div class="dash-chart" id="chart-recent"><h3>Recently Modified Songs</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
+
+  <div class="dash-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="dash-chart" id="chart-followups"><h3>Follow-up Reminders</h3><div class="loading"><span class="spinner"></span></div></div>
+    <div class="dash-activity" id="activity-feed"><h3 style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Recent Activity</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch('/api/dashboard-stats').then(r=>r.json()).then(d=>{
+  // Released count
+  if(d.released_count!==undefined)document.getElementById('dash-released').textContent=d.released_count;
+
+  // Today's Priorities
+  const pp=document.getElementById('dash-priorities');
+  if(d.priorities?.length){
+    const colors={danger:'var(--danger)',warning:'var(--warning)',info:'var(--info)',accent:'var(--accent)'};
+    pp.innerHTML='<div style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:8px">Today\'s Priorities</div>'+
+      d.priorities.map(p=>{
+        const c=colors[p.urgency]||'var(--accent)';
+        return `<a href="${p.action}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-raised);border:1px solid var(--border);border-left:3px solid ${c};border-radius:var(--r-md);margin-bottom:6px;text-decoration:none;color:var(--text);font-size:12px;transition:all .12s" onmouseover="this.style.borderColor='${c}'" onmouseout="this.style.borderColor='var(--border)'"><span style="font-size:16px">${p.icon}</span><span>${p.text}</span><span style="margin-left:auto;font-size:10px;color:var(--text-ghost)">→</span></a>`;
+      }).join('');
+  }
+
+  // New submissions badge
+  if(d.new_submissions>0){
+    const pitchCard=document.querySelector('.dash-cards a[href="/pitch"]');
+    if(pitchCard){
+      const badge=document.createElement('div');
+      badge.style.cssText='position:absolute;top:8px;right:8px;background:var(--danger);color:white;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px';
+      badge.textContent=d.new_submissions+' new';
+      pitchCard.style.position='relative';
+      pitchCard.appendChild(badge);
+    }
+  }
+
+  // Songs by status chart
+  const sc=document.getElementById('chart-status');
+  if(d.song_statuses){
+    const max=Math.max(...Object.values(d.song_statuses),1);
+    const colors={'Released':'#22c55e','Mastered':'#8b5cf6','Mixed':'#3b82f6','In Production':'#d4a853','Demo':'#5a5a62','Pitch Ready':'#06b6d4'};
+    sc.innerHTML='<h3>Songs by Audio Status</h3>'+Object.entries(d.song_statuses).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
+      const c=colors[k]||'var(--accent)';
+      return `<div class="chart-bar"><span class="chart-bar-label">${k||'(none)'}</span><div class="chart-bar-fill" style="width:${Math.max(v/max*100,2)}%;background:${c}"></div><span class="chart-bar-count">${v}</span></div>`;
+    }).join('');
+  }
+
+  // Upcoming releases
+  const uc=document.getElementById('chart-upcoming');
+  if(d.upcoming_releases?.length){
+    uc.innerHTML='<h3>Upcoming Releases</h3>'+d.upcoming_releases.map(r=>
+      `<div class="upcoming-item"><span class="upcoming-title">${r.title}</span><span class="upcoming-date">${r.date}</span><span class="upcoming-days">${r.days===0?'TODAY':r.days+' days'}</span></div>`
+    ).join('');
+  } else {
+    uc.innerHTML='<h3>Upcoming Releases</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No upcoming releases in the next 60 days.</p>';
+  }
+
+  // Directory by field chart
+  const fc=document.getElementById('chart-field');
+  if(d.field_types){
+    const max2=Math.max(...Object.values(d.field_types),1);
+    fc.innerHTML='<h3>Directory by Field Type</h3>'+Object.entries(d.field_types).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>
+      `<div class="chart-bar"><span class="chart-bar-label">${k||'(none)'}</span><div class="chart-bar-fill" style="width:${Math.max(v/max2*100,2)}%"></div><span class="chart-bar-count">${v}</span></div>`
+    ).join('');
+    if(d.need_email_count>0)fc.innerHTML+=`<div style="margin-top:8px;font-size:11px;color:var(--danger)">${d.need_email_count} contacts need email addresses</div>`;
+  }
+
+  // Recently modified songs
+  const rc=document.getElementById('chart-recent');
+  if(d.recent_songs?.length){
+    rc.innerHTML='<h3>Recently Modified Songs</h3>'+d.recent_songs.map(r=>
+      `<div class="upcoming-item"><span class="upcoming-title">${r.title}</span><span class="upcoming-date">${r.modified}</span></div>`
+    ).join('');
+  } else {
+    rc.innerHTML='<h3>Recently Modified Songs</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No recent modifications.</p>';
+  }
+
+  // Activity feed
+  const af=document.getElementById('activity-feed');
+  if(d.recent_activity?.length){
+    af.innerHTML='<h3 style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Recent Activity</h3>'+
+      d.recent_activity.map(a=>`<div class="activity-item"><span class="activity-icon">${a.icon}</span><span class="activity-text">${a.text}</span><span class="activity-time">${a.time}</span></div>`).join('');
+  } else af.innerHTML='<h3 style="font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Recent Activity</h3><p style="color:var(--text-ghost);font-size:12px">No recent activity.</p>';
+}).catch(()=>{});
+
+// Follow-up reminders
+fetch('/api/follow-ups').then(r=>r.json()).then(d=>{
+  const fc=document.getElementById('chart-followups');
+  const reminders=d.reminders||[];
+  if(reminders.length){
+    let html='<h3>Follow-up Reminders</h3>';
+    html+=`<div style="font-size:11px;color:var(--accent);margin-bottom:8px">${d.total} contacts need follow-up</div>`;
+    reminders.slice(0,10).forEach(r=>{
+      const cls=r.priority==='overdue'?'reminder-overdue':'reminder-due';
+      html+=`<div class="reminder-item" onclick="window.location.href='/directory?search=${encodeURIComponent(r.name)}'" style="cursor:pointer">`;
+      html+=`<span class="reminder-name">${r.name}</span>`;
+      html+=`<span style="color:var(--text-ghost);font-size:10px">${r.field}</span>`;
+      html+=`<span class="reminder-days ${cls}">${r.days_since}d ago</span>`;
+      html+=`</div>`;
+    });
+    fc.innerHTML=html;
+  } else {
+    fc.innerHTML='<h3>Follow-up Reminders</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No follow-ups due. All contacts are up to date.</p>';
+  }
+}).catch(()=>{});
+</script>
+{% endblock %}
