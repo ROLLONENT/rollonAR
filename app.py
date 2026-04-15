@@ -98,7 +98,7 @@ resolver = IDResolver(sheets)
 
 # ==================== AUTO-CREATE MISSING SHEET TABS ====================
 _SHEET_SCHEMAS = {
-    'Invoices': ['Invoice No','Date','Client','Description','Amount','Currency','Status','Due Date','Payment Date','Category','Notes'],
+    'Invoices': ['Invoice No','Entity','Date','Client','Description','Amount','Expenses','Total','Currency','COMP GBP','Exchange','COMP + Exchange Total','Status','Due Date','Payment Date','Year','Category','Payee Name','Email','Commission','Celina Comms','Notes','Airtable ID'],
     'Playlists': ['ID','Name','Description','Song IDs','Song Data','Created','Created By','Views','Status'],
     'Templates': ['Name','Type','Subject','Body','Last Used'],
     'Pitch Log': ['Date','Round','Pitch Type','Contact Name','Contact Email','Song Title','DISCO Link','Status','Response Date','Notes'],

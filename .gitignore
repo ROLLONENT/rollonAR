@@ -8,3 +8,4 @@ rollon.log
 .env
 .edit_tokens.json
 migrate_attachments.py
+migrate_invoices.py

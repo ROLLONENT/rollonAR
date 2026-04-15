@@ -455,10 +455,10 @@
       {
         "id": "EC-09",
         "rule": "Airtable invoice data migrated from legacy base",
-        "status": "BLOCKED",
-        "blocker": "api.airtable.com not on network allowlist. Need CSV export from Airtable.",
+        "status": "PASSING",
+        "note": "277 invoices imported (212 ROLLON ENT + 65 RYE) from Airtable base appQbyUfSpeM1WQnl via API on 2026-04-15. All fields mapped. Airtable IDs preserved.",
         "airtable_token": "REDACTED",
-        "airtable_base": "appsmM5G2HDXmey9T"
+        "airtable_base": "appQbyUfSpeM1WQnl"
       },
       {
         "id": "EC-10",
