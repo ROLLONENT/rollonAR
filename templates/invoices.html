@@ -127,7 +127,7 @@ const I={
     fetch('/api/autocomplete/invoices/Category?limit=50').then(r=>r.json()).then(catData=>{
       const cats=(catData.values&&catData.values.length)?catData.values:['Management','A&R','Tour Management','Commission','Sync','Other'];
       showPromptModal('New Invoice',[
-        {label:'Entity',type:'select',options:['ROLLON ENT','RESTLESS YOUTH'],value:'ROLLON ENT'},
+        {label:'Entity',type:'select',options:['ROLLON ENT','RESTLESS YOUTH','Tyber Heart Limited'],value:'ROLLON ENT'},
         {label:'Client (search Personnel)',placeholder:'Type to search...'},
         {label:'Description',placeholder:'e.g. April 2026 Consultancy Fee'},
         {label:'Amount',placeholder:'e.g. 5000.00'},
@@ -136,7 +136,7 @@ const I={
       ],(v)=>{
       if(!v[1]||!v[3]){toast('Client and Amount required','error');return}
       const entity=v[0]||'ROLLON ENT';
-      const prefix=entity==='RESTLESS YOUTH'?'RYE':'ROL';
+      const prefix=entity==='RESTLESS YOUTH'?'RYE':(entity==='Tyber Heart Limited'?'TYB':'ROL');
       fetch('/api/invoices/new',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           'Entity':entity,'Client':v[1],'Description':v[2],
@@ -193,6 +193,19 @@ window.openRecord=function(ri,table){
             const btn2=document.createElement('button');btn2.className='btn';btn2.textContent='Mark as Sent';
             btn2.onclick=()=>{fetch('/api/invoices/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field:'Status',row_index:ri,value:'Sent'})}).then(r=>r.json()).then(d=>{if(d.success){toast('Sent');I.load();document.getElementById('detail-modal')?.remove()}else toast(d.error||'Failed','error')})};
             actions.appendChild(btn2)}
+          // PDF download button
+          const pdfBtn=document.createElement('button');pdfBtn.className='btn';pdfBtn.textContent='Download PDF';
+          pdfBtn.onclick=()=>{window.open('/api/invoices/pdf/'+ri,'_blank')};
+          actions.appendChild(pdfBtn);
+          // Duplicate button for recurring retainers
+          const dupBtn=document.createElement('button');dupBtn.className='btn';dupBtn.textContent='Duplicate';
+          dupBtn.onclick=()=>{fetch('/api/invoices/duplicate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_index:ri})}).then(r=>r.json()).then(d=>{if(d.success){toast('Duplicated: '+d.invoice_no);I.load();closeModal()}else toast(d.error||'Failed','error')})};
+          actions.appendChild(dupBtn);
+          // Send Reminder for overdue
+          if(status==='overdue'||status==='sent'){
+            const remBtn=document.createElement('button');remBtn.className='btn';remBtn.style.borderColor='#f59e0b';remBtn.style.color='#f59e0b';remBtn.textContent='Send Reminder';
+            remBtn.onclick=()=>{fetch('/api/invoices/send-reminder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_index:ri})}).then(r=>r.json()).then(d=>{if(d.success){toast('Reminder sent to '+d.sent_to)}else toast(d.error||'Failed','error')})};
+            actions.appendChild(remBtn)}
         }
       },100);
     })}};

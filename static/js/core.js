@@ -396,7 +396,7 @@ function renderDetailModal(record,headers,table){
   // Details tab
   const _hideEmpty=localStorage.getItem('rollon_hide_empty')==='true';
   html+=`<div id="tab-details" class="modal-tab-content active">`;
-  html+=`<div class="detail-toolbar"><label class="hide-empty-toggle"><input type="checkbox" ${_hideEmpty?'checked':''} onchange="toggleHideEmpty(this.checked)"> Hide empty fields</label></div>`;
+  html+=`<div class="detail-toolbar"><button class="hide-empty-pill ${_hideEmpty?'active':''}" onclick="toggleHideEmpty(!this.classList.contains('active'))">${_hideEmpty?'Show All Fields':'Hide Empty'}</button></div>`;
   html+=`<div class="detail-grid" ${_hideEmpty?'data-hide-empty="1"':''}>`;
   for(const h of headers){
     const ch=cleanH(h);const chLow=ch.toLowerCase();
@@ -634,7 +634,11 @@ function songActions(rec,headers){
   const admin=fv(rec,headers,'song admin');
   // Quick copy buttons with icons
   if(disco)b+=`<button class="btn btn-sm" onclick="copyText('${escA(disco)}')" title="Copy DISCO link to clipboard">📋 DISCO</button>`;
-  if(db)b+=`<button class="btn btn-sm" onclick="copyText('${escA(db)}')" title="Copy Dropbox link to clipboard">📋 Dropbox</button>`;
+  if(db){
+    b+=`<button class="btn btn-sm" onclick="copyText('${escA(db)}')" title="Copy Dropbox link to clipboard">📋 Dropbox</button>`;
+    const directUrl=db.replace('dl=0','dl=1').includes('dl=1')?db.replace('dl=0','dl=1'):db+(db.includes('?')?'&':'?')+'dl=1';
+    b+=`<button class="btn btn-sm" onclick="playAudioPreview('${escA(directUrl)}',this)" title="Play audio preview">▶ Play</button>`;
+  }
   if(songUrl)b+=`<button class="btn btn-sm" onclick="window.open('${escA(songUrl)}','_blank')" title="Open song link">🔗 Song URL</button>`;
   b+=`<button class="btn btn-sm" onclick="copyLyrics(${rec._row_index})" title="Copy full lyrics text to clipboard">📋 Lyrics</button>`;
   b+=`<button class="btn btn-sm btn-accent" onclick="calcPubSplits(${rec._row_index})" title="Calculate publishing splits from songwriter credits">🧮 Calc. Pub</button>`;
@@ -678,6 +682,18 @@ function toggleHideEmpty(checked){
   localStorage.setItem('rollon_hide_empty',checked?'true':'false');
   const grid=document.querySelector('.detail-grid');
   if(grid){if(checked)grid.setAttribute('data-hide-empty','1');else grid.removeAttribute('data-hide-empty')}
+  const pill=document.querySelector('.hide-empty-pill');
+  if(pill){pill.textContent=checked?'Show All Fields':'Hide Empty';if(checked)pill.classList.add('active');else pill.classList.remove('active')}
+}
+
+let _audioPreview=null;
+function playAudioPreview(url,btn){
+  if(_audioPreview){_audioPreview.pause();_audioPreview=null;if(btn)btn.textContent='▶ Play';return}
+  _audioPreview=new Audio(url);
+  _audioPreview.volume=0.8;
+  _audioPreview.play().catch(()=>{toast('Audio playback failed','error')});
+  if(btn)btn.textContent='⏸ Pause';
+  _audioPreview.addEventListener('ended',()=>{_audioPreview=null;if(btn)btn.textContent='▶ Play'});
 }
 
 function copyLyrics(ri){

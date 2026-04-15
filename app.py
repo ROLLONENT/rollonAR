@@ -1,5 +1,5 @@
 """
-ROLLON AR v33 — A&R Operating System
+ROLLON AR v34 — A&R Operating System
 Google Sheets master. No external dependencies.
 """
 
@@ -180,6 +180,7 @@ TAG_COLORS = {
 
 CITY_LOOKUP = {}
 UNDO_STACK = deque(maxlen=50)
+_ID_LOCK = threading.Lock()
 
 TIMEZONE_OFFSETS = {
     'US/Pacific':-8,'US/Mountain':-7,'US/Central':-6,'US/Eastern':-5,
@@ -2416,7 +2417,8 @@ def public_playlist(pid):
                     songs=songs,
                     views=current_views + 1 if views_col else 0,
                     created=rec.get('Created', ''),
-                    pid=pid)
+                    pid=pid,
+                    playlist_id=pid)
         return "Playlist not found", 404
     except Exception as e:
         return f"Error: {e}", 500
@@ -2810,6 +2812,395 @@ def api_resolver_rebuild():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ==================== PLAY LOG ====================
+def _ensure_play_log_sheet():
+    """Create Play Log sheet if it doesn't exist."""
+    try:
+        data = sheets.get_all_rows('Play Log')
+        if data: return True
+    except: pass
+    try:
+        sheets.create_new_sheet('Play Log')
+        headers = ['Timestamp', 'Song', 'Playlist', 'Duration (s)', 'IP']
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Play Log'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute()
+        sheets._invalidate_cache('Play Log')
+        return True
+    except: return False
+
+@app.route('/api/play-log', methods=['POST'])
+def api_play_log():
+    """Log a play event from the public playlist player."""
+    if not rate_limit_check(max_per_hour=200):
+        return jsonify({'error': 'Rate limited'}), 429
+    d = request.json or {}
+    song = d.get('song', '')
+    playlist = d.get('playlist', '')
+    duration = d.get('duration', 0)
+    if not song: return jsonify({'error': 'Song required'}), 400
+    try:
+        _ensure_play_log_sheet()
+        sheets.append_row('Play Log', [
+            datetime.now().isoformat(),
+            song,
+            playlist,
+            str(duration),
+            _get_client_ip()
+        ])
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.warning(f"Play log error: {e}")
+        return jsonify({'success': True})  # Don't fail the client
+
+
+# ==================== INVOICE OVERDUE SCANNER ====================
+_overdue_lock = threading.Lock()
+
+def scan_overdue_invoices():
+    """Scan invoices and mark overdue ones. Runs on startup and every 60 min."""
+    with _overdue_lock:
+        try:
+            data = sheets.get_all_rows('Invoices')
+            if not data or len(data) < 2: return 0
+            headers = data[0]; rows = data[1:]
+            status_col = find_col(headers, 'status')
+            due_col = find_col(headers, 'due date')
+            if status_col is None or due_col is None: return 0
+            count = 0
+            for i, row in enumerate(rows):
+                status = str(row[status_col]).strip() if status_col < len(row) else ''
+                due_str = str(row[due_col]).strip() if due_col < len(row) else ''
+                if status.lower() != 'sent' or not due_str: continue
+                try:
+                    due_date = None
+                    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y'):
+                        try: due_date = datetime.strptime(due_str, fmt); break
+                        except ValueError: pass
+                    if due_date and due_date.date() < datetime.now().date():
+                        sheets.update_cell('Invoices', i + 2, status_col + 1, 'Overdue')
+                        count += 1
+                except: pass
+            if count > 0:
+                logging.info(f"Overdue scanner: marked {count} invoices as Overdue")
+            return count
+        except Exception as e:
+            logging.warning(f"Overdue scanner error: {e}")
+            return 0
+
+def _overdue_timer():
+    """Run overdue scanner every 60 minutes."""
+    while True:
+        time.sleep(3600)
+        scan_overdue_invoices()
+
+
+# ==================== INVOICE PDF GENERATOR ====================
+INVOICE_ENTITIES = {
+    'ROLLON ENT': {
+        'name': 'ROLLON ENT LLC',
+        'address': ['ROLLON ENT LLC', 'Los Angeles, CA', 'United States'],
+        'email': 'celina@rollonent.com',
+        'prefix': 'ROL'
+    },
+    'RESTLESS YOUTH': {
+        'name': 'RESTLESS YOUTH LLC',
+        'address': ['RESTLESS YOUTH LLC', 'Los Angeles, CA', 'United States'],
+        'email': 'celina@rollonent.com',
+        'prefix': 'RYE'
+    },
+    'Tyber Heart Limited': {
+        'name': 'Tyber Heart Limited',
+        'address': ['Tyber Heart Limited', 'London', 'United Kingdom'],
+        'email': 'celina@rollonent.com',
+        'prefix': 'TYB'
+    }
+}
+
+@app.route('/api/invoices/pdf/<int:ri>')
+@admin_required
+def api_invoice_pdf(ri):
+    """Generate branded PDF for an invoice."""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib.colors import HexColor
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    except ImportError:
+        return jsonify({'error': 'reportlab not installed. pip install reportlab'}), 500
+
+    try:
+        data = sheets.get_all_rows('Invoices')
+        if not data or len(data) < 2: return jsonify({'error': 'No invoices'}), 404
+        headers = data[0]
+        row = sheets.get_row('Invoices', ri)
+        rec = {}
+        for j, h in enumerate(headers):
+            rec[cleanH(h)] = row[j] if j < len(row) else ''
+
+        entity_name = rec.get('Entity', 'ROLLON ENT')
+        entity = INVOICE_ENTITIES.get(entity_name, INVOICE_ENTITIES['ROLLON ENT'])
+
+        # Generate PDF
+        os.makedirs(os.path.join(os.path.dirname(__file__), 'static', 'invoices'), exist_ok=True)
+        inv_no = rec.get('Invoice No', f'INV-{ri}')
+        filename = f"invoice_{inv_no.replace('/', '-')}.pdf"
+        filepath = os.path.join(os.path.dirname(__file__), 'static', 'invoices', filename)
+
+        doc = SimpleDocTemplate(filepath, pagesize=letter, topMargin=0.75*inch, bottomMargin=0.75*inch)
+        styles = getSampleStyleSheet()
+        accent = HexColor('#d4a853')
+        dark = HexColor('#1a1a1a')
+        muted = HexColor('#666666')
+
+        title_s = ParagraphStyle('InvTitle', parent=styles['Title'], fontSize=28, textColor=dark, fontName='Helvetica-Bold', spaceAfter=4)
+        entity_s = ParagraphStyle('Entity', parent=styles['Normal'], fontSize=14, textColor=accent, fontName='Helvetica-Bold', spaceAfter=2)
+        addr_s = ParagraphStyle('Addr', parent=styles['Normal'], fontSize=10, textColor=muted, spaceAfter=1)
+        label_s = ParagraphStyle('Label', parent=styles['Normal'], fontSize=9, textColor=muted, fontName='Helvetica-Bold')
+        val_s = ParagraphStyle('Val', parent=styles['Normal'], fontSize=11, textColor=dark)
+        note_s = ParagraphStyle('Note', parent=styles['Normal'], fontSize=10, textColor=muted, spaceBefore=20)
+
+        story = []
+        story.append(Paragraph('INVOICE', title_s))
+        story.append(Paragraph(entity['name'], entity_s))
+        for line in entity['address']:
+            story.append(Paragraph(line, addr_s))
+        story.append(Spacer(1, 20))
+
+        # Invoice details table
+        inv_data = [
+            ['Invoice No:', inv_no],
+            ['Date:', rec.get('Date', '')],
+            ['Due Date:', rec.get('Due Date', '')],
+            ['Status:', rec.get('Status', 'Draft')],
+        ]
+        t = Table(inv_data, colWidths=[100, 300])
+        t.setStyle(TableStyle([
+            ('FONT', (0, 0), (0, -1), 'Helvetica-Bold', 9),
+            ('FONT', (1, 0), (1, -1), 'Helvetica', 11),
+            ('TEXTCOLOR', (0, 0), (0, -1), muted),
+            ('TEXTCOLOR', (1, 0), (1, -1), dark),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 16))
+
+        # Bill To
+        story.append(Paragraph('BILL TO', label_s))
+        story.append(Paragraph(rec.get('Client', '-'), val_s))
+        story.append(Spacer(1, 16))
+
+        # Description & Amount
+        desc_data = [
+            ['Description', 'Amount'],
+            [rec.get('Description', '-'), f"{rec.get('Currency', 'USD')} {rec.get('Amount', '0.00')}"],
+        ]
+        dt = Table(desc_data, colWidths=[350, 130])
+        dt.setStyle(TableStyle([
+            ('FONT', (0, 0), (-1, 0), 'Helvetica-Bold', 9),
+            ('FONT', (0, 1), (-1, -1), 'Helvetica', 11),
+            ('TEXTCOLOR', (0, 0), (-1, 0), muted),
+            ('TEXTCOLOR', (0, 1), (-1, -1), dark),
+            ('LINEBELOW', (0, 0), (-1, 0), 1, HexColor('#cccccc')),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, accent),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 1), (-1, -1), 8),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ]))
+        story.append(dt)
+        story.append(Spacer(1, 20))
+
+        # Total
+        story.append(Paragraph(f"TOTAL: {rec.get('Currency', 'USD')} {rec.get('Amount', '0.00')}", ParagraphStyle(
+            'Total', parent=styles['Normal'], fontSize=16, textColor=accent, fontName='Helvetica-Bold', alignment=2)))
+
+        if rec.get('Notes'):
+            story.append(Spacer(1, 20))
+            story.append(Paragraph(f"Notes: {rec['Notes']}", note_s))
+
+        # Category
+        if rec.get('Category'):
+            story.append(Paragraph(f"Category: {rec['Category']}", note_s))
+
+        doc.build(story)
+        return send_from_directory(os.path.join(os.path.dirname(__file__), 'static', 'invoices'), filename, as_attachment=True)
+    except Exception as e:
+        logging.exception('Invoice PDF failed')
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== INVOICE SEND REMINDER ====================
+@app.route('/api/invoices/send-reminder', methods=['POST'])
+@admin_required
+def api_invoice_send_reminder():
+    """Send reminder email for overdue invoice."""
+    d = request.json or {}
+    ri = d.get('row_index')
+    if not ri: return jsonify({'error': 'row_index required'}), 400
+    try:
+        data = sheets.get_all_rows('Invoices')
+        if not data or len(data) < 2: return jsonify({'error': 'No invoices'}), 404
+        headers = data[0]
+        row = sheets.get_row('Invoices', ri)
+        rec = {}
+        for j, h in enumerate(headers):
+            rec[cleanH(h)] = row[j] if j < len(row) else ''
+
+        client = rec.get('Client', '')
+        inv_no = rec.get('Invoice No', '')
+        amount = rec.get('Amount', '')
+        currency = rec.get('Currency', 'USD')
+        due_date = rec.get('Due Date', '')
+        entity = rec.get('Entity', 'ROLLON ENT')
+
+        # Find client email from Personnel
+        client_email = ''
+        if client:
+            per_data = sheets.get_all_rows('Personnel')
+            if per_data and len(per_data) > 1:
+                per_h = per_data[0]
+                nc = find_col(per_h, 'name')
+                ec = find_col(per_h, 'email')
+                if nc is not None and ec is not None:
+                    for pr in per_data[1:]:
+                        if nc < len(pr) and pr[nc].strip().lower() == client.lower():
+                            client_email = pr[ec].strip() if ec < len(pr) else ''
+                            break
+
+        if not client_email:
+            return jsonify({'error': f'No email found for client: {client}'}), 400
+
+        # Send reminder via SMTP
+        if not SMTP_PASS:
+            return jsonify({'error': 'SMTP not configured'}), 400
+
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f'Payment Reminder — Invoice {inv_no}'
+        msg['From'] = SMTP_FROM
+        msg['To'] = client_email
+
+        body = f"""Hi {client},
+
+This is a friendly reminder that Invoice {inv_no} for {currency} {amount} was due on {due_date}.
+
+Please let us know if you have any questions or need updated payment details.
+
+Best regards,
+{entity}
+{SMTP_FROM}"""
+
+        msg.attach(MIMEText(body, 'plain'))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, client_email, msg.as_string())
+
+        return jsonify({'success': True, 'sent_to': client_email})
+    except Exception as e:
+        logging.exception('Invoice reminder failed')
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== INVOICE DUPLICATE ====================
+@app.route('/api/invoices/duplicate', methods=['POST'])
+@admin_required
+def api_invoice_duplicate():
+    """Duplicate an invoice for recurring retainers."""
+    d = request.json or {}
+    ri = d.get('row_index')
+    if not ri: return jsonify({'error': 'row_index required'}), 400
+    try:
+        data = sheets.get_all_rows('Invoices')
+        if not data or len(data) < 2: return jsonify({'error': 'No invoices'}), 404
+        headers = data[0]
+        row = sheets.get_row('Invoices', ri)
+        rec = {}
+        for j, h in enumerate(headers):
+            rec[cleanH(h)] = row[j] if j < len(row) else ''
+
+        # Copy key fields, new date and number
+        entity = rec.get('Entity', 'ROLLON ENT')
+        prefix = 'RYE' if 'restless' in entity.lower() else ('TYB' if 'tyber' in entity.lower() else 'ROL')
+
+        # Auto-number: find highest existing number for this prefix
+        no_col = find_col(headers, 'invoice no')
+        max_num = 0
+        if no_col is not None:
+            for r in data[1:]:
+                if no_col < len(r):
+                    ino = str(r[no_col]).strip()
+                    if ino.startswith(prefix + '-'):
+                        try: max_num = max(max_num, int(ino[len(prefix)+1:]))
+                        except ValueError: pass
+        new_no = f"{prefix}-{max_num + 1:03d}"
+
+        new_row = [''] * len(headers)
+        for j, h in enumerate(headers):
+            ch = cleanH(h).lower()
+            if ch == 'invoice no': new_row[j] = new_no
+            elif ch == 'date': new_row[j] = datetime.now().strftime('%Y-%m-%d')
+            elif ch == 'due date': new_row[j] = (datetime.now() + timedelta(days=14)).strftime('%Y-%m-%d')
+            elif ch == 'status': new_row[j] = 'Draft'
+            elif ch == 'payment date': new_row[j] = ''
+            elif ch in ('system id', 'airtable id'):
+                new_row[j] = next_system_id()
+            else:
+                new_row[j] = row[j] if j < len(row) else ''
+
+        sheets.append_row('Invoices', new_row)
+        return jsonify({'success': True, 'invoice_no': new_no})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== INVOICE FOLLOW-UP FLAGS ====================
+@app.route('/api/invoices/flags')
+@admin_required
+def api_invoice_flags():
+    """Get follow-up flag status for invoices."""
+    try:
+        data = sheets.get_all_rows('Invoices')
+        if not data or len(data) < 2: return jsonify({'flags': {}})
+        headers = data[0]
+        status_col = find_col(headers, 'status')
+        due_col = find_col(headers, 'due date')
+        no_col = find_col(headers, 'invoice no')
+        if status_col is None or due_col is None: return jsonify({'flags': {}})
+
+        flags = {}
+        now = datetime.now()
+        for i, row in enumerate(data[1:]):
+            status = str(row[status_col]).strip().lower() if status_col < len(row) else ''
+            if status not in ('sent', 'overdue'): continue
+            due_str = str(row[due_col]).strip() if due_col < len(row) else ''
+            if not due_str: continue
+            try:
+                due_date = None
+                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y'):
+                    try: due_date = datetime.strptime(due_str, fmt); break
+                    except ValueError: pass
+                if not due_date: continue
+                days_overdue = (now - due_date).days
+                if days_overdue <= 0: continue
+                inv_no = str(row[no_col]).strip() if no_col is not None and no_col < len(row) else str(i + 2)
+                if days_overdue >= 30: color = 'red'
+                elif days_overdue >= 14: color = 'orange'
+                elif days_overdue >= 7: color = 'yellow'
+                else: continue
+                flags[inv_no] = {'days': days_overdue, 'color': color, 'row_index': i + 2}
+            except: pass
+        return jsonify({'flags': flags})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.errorhandler(404)
 def not_found(e): return render_template('404.html'), 404
 
@@ -2826,6 +3217,16 @@ if __name__ == '__main__':
     print("Building name cache...")
     try: build_name_cache()
     except Exception as e: print(f"  Warning: {e}")
+
+    print("Scanning overdue invoices...")
+    try:
+        overdue_count = scan_overdue_invoices()
+        print(f"  Marked {overdue_count} invoices as overdue")
+    except Exception as e: print(f"  Warning: {e}")
+
+    # Start overdue scanner background thread
+    overdue_thread = threading.Thread(target=_overdue_timer, daemon=True)
+    overdue_thread.start()
 
     # Lazy rebuild: if resolver has 0 entries, retry on first request
     @app.before_request

@@ -149,7 +149,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 
     <!-- AUDIO -->
     <div class="fs"><div class="fst">Audio + Files</div>
-      <div class="fg"><label><span class="req">Download Link</span></label><div style="position:relative"><input class="fi" id="f-audio" placeholder="Dropbox, Google Drive, WeTransfer link" onfocus="urlPrefill(this)" onblur="urlClean(this)" oninput="validateDropboxLink(this)"><span id="dbx-check" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);display:none;font-size:16px"></span></div></div>
+      <div class="fg"><label><span class="req">Download Link</span></label><div style="position:relative"><input class="fi" id="f-audio" placeholder="Dropbox, Google Drive, WeTransfer link" onfocus="urlPrefill(this)" onblur="urlClean(this)" oninput="validateDropboxLink(this)"><span id="dbx-check" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);display:none;font-size:16px"></span></div><div id="dbx-preview" style="display:none;font-size:11px;color:var(--accent);margin-top:4px;font-family:var(--font-m)"></div></div>
       <div class="fg"><label>Lyric Document Link</label><input class="fi" id="f-lyricdoc" placeholder="Google Docs or Dropbox link" onfocus="urlPrefill(this)" onblur="urlClean(this)"></div>
     </div>
 
@@ -232,9 +232,11 @@ let _lastSubmitData=null;
 function urlPrefill(inp){if(!inp.value.trim()){inp.value='http://';inp.setSelectionRange(7,7)}}
 function urlClean(inp){if(inp.value==='http://'||inp.value==='https://')inp.value='';validateDropboxLink(inp)}
 function validateDropboxLink(inp){
-  const check=document.getElementById('dbx-check');if(!check)return;
+  const check=document.getElementById('dbx-check');
+  const preview=document.getElementById('dbx-preview');
+  if(!check)return;
   const v=inp.value.trim();
-  if(!v||v==='http://'){check.style.display='none';return}
+  if(!v||v==='http://'){check.style.display='none';if(preview)preview.style.display='none';return}
   if(v.includes('dropbox.com')){
     // Convert share link to direct download
     if(v.includes('?dl=0')){inp.value=v.replace('?dl=0','?dl=1')}
@@ -242,12 +244,24 @@ function validateDropboxLink(inp){
       inp.value=v+(v.includes('?')?'&':'?')+'dl=1';
     }
     check.textContent='\u2705';check.style.display='inline';
+    // Extract filename from URL for preview
+    if(preview){
+      try{
+        const path=new URL(v.split('?')[0]).pathname;
+        const fn=decodeURIComponent(path.split('/').pop()||'');
+        if(fn){preview.textContent=fn;preview.style.display='block'}
+        else preview.style.display='none';
+      }catch(e){preview.style.display='none'}
+    }
   } else if(v.includes('drive.google.com')||v.includes('wetransfer.com')){
     check.textContent='\u2705';check.style.display='inline';
+    if(preview)preview.style.display='none';
   } else if(v.startsWith('http')){
     check.textContent='\u26A0\uFE0F';check.style.display='inline';
+    if(preview)preview.style.display='none';
   } else {
     check.style.display='none';
+    if(preview)preview.style.display='none';
   }
 }
 

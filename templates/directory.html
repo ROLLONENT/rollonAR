@@ -115,7 +115,7 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     this.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
     fetch(url).then(r=>r.json()).then(d=>{
       if(d.error){toast(d.error,'error');return}
-      this.headers=d.headers;this.lastRecords=d.records;window._currentHeaders=d.headers;
+      this.headers=d.headers;this.lastRecords=d.records;window._currentHeaders=d.headers;window._currentTable='directory';
       document.getElementById('record-count').textContent=`${d.total} contacts`;
       if(!this.visibleCols.length){
         const ac=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
@@ -272,12 +272,15 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};
     this.currentView=n;ViewSync.save('directory','rollon_dir_views',this.views);this.renderViews();toast('View saved: '+n)})},
 
-  newRecord(){showPromptModal('New Contact',[
-    {label:'Name (required)',placeholder:'Full name'},
-    {label:'Email',placeholder:'email@example.com'},
-    {label:'Field',placeholder:'A&R, MGMT, Sync...',type:'select',options:['Record A&R','A&R','MGMT','Publishing A&R','Agent','Music Supervisor','Sync','Publicist','Artist','Producer','Songwriter','Creative']},
-    {label:'City',placeholder:'Los Angeles, London...'},
-  ],(v)=>{
+  newRecord(){
+    fetch('/api/autocomplete/directory/Field?limit=50').then(r=>r.json()).catch(()=>({values:[]})).then(fieldData=>{
+      const fieldOpts=fieldData.values&&fieldData.values.length?fieldData.values:['Record A&R','MGMT','Publishing A&R','Agent','Music Supervisor','Sync'];
+      showPromptModal('New Contact',[
+        {label:'Name (required)',placeholder:'Full name'},
+        {label:'Email',placeholder:'email@example.com'},
+        {label:'Field',placeholder:'A&R, MGMT, Sync...',type:'select',options:fieldOpts},
+        {label:'City',placeholder:'Los Angeles, London...'},
+      ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Name is required','error');return}
     const data={Name:v[0].trim()};
     if(v[1])data['Email']=v[1].trim();
@@ -295,7 +298,8 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
                   renderDetailModal(rec,this.headers,'directory')});}
             });
           },500);
-        } else toast(d.error||'Failed','error')})})},
+        } else toast(d.error||'Failed','error')})})
+    })},
 
   sendToPitch(){
     const nameH=this.headers.find(h=>cleanH(h).toLowerCase()==='name');

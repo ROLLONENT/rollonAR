@@ -117,7 +117,7 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     this.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
     fetch(url).then(r=>r.json()).then(d=>{
       if(d.error){toast(d.error,'error');return}
-      this.headers=d.headers;window._currentHeaders=d.headers;
+      this.headers=d.headers;window._currentHeaders=d.headers;window._currentTable='songs';
       document.getElementById('record-count').textContent=`${d.total} songs`;
       if(!this.visibleCols.length){
         const ac=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
@@ -280,17 +280,27 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
     this.views[n]={filters:[...this.filters],visibleCols:[...this.visibleCols],sort:this.sortField,dir:this.sortDir};
     this.currentView=n;ViewSync.save('songs','rollon_song_views',this.views);this.renderViews();toast('View saved: '+n)})},
 
-  newRecord(){showPromptModal('New Song',[
-    {label:'Title (required)',placeholder:'Song title'},
-    {label:'Artist',placeholder:'Performing artist'},
-    {label:'Producer',placeholder:'Producer name(s)'},
-    {label:'Audio Status',type:'select',options:['Demo','Production','Mixed','Mastered','Pitch Ready','Released']},
-    {label:'Genre',placeholder:'e.g. Pop, Dance',type:'tags',options:['Pop','Dance','R&B','Hip Hop','Country','Rock','Indie','Electronic','KPOP','Singer-Songwriter','Sync','Afrobeats','Latin','Alternative']},
-    {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:['Pop Pitch','Dance Pitch','KPOP Pitch','SSW Pitch','Sync Pitch','BW Collab','Pitch Ready','New Submission','EMMMA 2025 Pitch','Writing Trip','PW Tour']},
-    {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
-    {label:'Duration',placeholder:'e.g. 3:25'},
-    {label:'BPM',placeholder:'e.g. 120'},
-  ],(v)=>{
+  newRecord(){
+    // Load options dynamically from actual sheet data
+    Promise.all([
+      fetch('/api/autocomplete/songs/Audio Status?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/songs/Genre?limit=50').then(r=>r.json()).catch(()=>({values:[]})),
+      fetch('/api/autocomplete/songs/Tag?limit=50').then(r=>r.json()).catch(()=>({values:[]}))
+    ]).then(([asData,genData,tagData])=>{
+      const statuses=asData.values&&asData.values.length?asData.values:['Demo','Production','Mixed','Mastered','Pitch Ready','Released'];
+      const genres=genData.values&&genData.values.length?genData.values:['Pop','Dance','R&B'];
+      const tags=tagData.values&&tagData.values.length?tagData.values:['Pop Pitch','Dance Pitch'];
+      showPromptModal('New Song',[
+        {label:'Title (required)',placeholder:'Song title'},
+        {label:'Artist',placeholder:'Performing artist'},
+        {label:'Producer',placeholder:'Producer name(s)'},
+        {label:'Audio Status',type:'select',options:statuses},
+        {label:'Genre',placeholder:'e.g. Pop, Dance',type:'tags',options:genres},
+        {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:tags},
+        {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
+        {label:'Duration',placeholder:'e.g. 3:25'},
+        {label:'BPM',placeholder:'e.g. 120'},
+      ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Title is required','error');return}
     const data={Title:v[0].trim()};
     if(v[1])data['Artist']=v[1].trim();
@@ -305,7 +315,8 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
       body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
         if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load()}
         else toast(d.error||'Failed','error')
-      }).catch(()=>toast('Network error','error'))})}
+      }).catch(()=>toast('Network error','error'))})
+    })}
 };
 
 window.openRecord=function(ri,table){
