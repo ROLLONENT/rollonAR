@@ -900,3 +900,32 @@ tr.row-artist td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
    VERSION FOOTER
    ================================================================ */
 .version-footer{text-align:center;padding:20px 0 12px;font-size:10px;color:var(--text-ghost);font-family:var(--font-m);letter-spacing:.3px;opacity:.5}
+
+/* ================================================================
+   SCOUT PAGE
+   ================================================================ */
+.scout-page{padding:16px 20px}
+.scout-header{margin-bottom:20px}
+.scout-panels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+@media(max-width:1200px){.scout-panels{grid-template-columns:1fr}}
+.scout-panel{background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;min-height:300px}
+.scout-panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.scout-panel-header h2{font-family:var(--font-d);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)}
+.scout-list{max-height:calc(100vh - 280px);overflow-y:auto}
+.scout-card{background:var(--bg);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:12px 14px;margin-bottom:8px;transition:border-color .15s}
+.scout-card:hover{border-color:rgba(212,168,83,.3)}
+.scout-card.scout-in-dir{border-left:3px solid var(--success)}
+.scout-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.scout-name{font-family:var(--font-d);font-size:13px;font-weight:600;color:var(--text)}
+.scout-warm{font-size:8px;padding:1px 6px;background:var(--success);color:#131316;border-radius:8px;margin-left:6px;font-weight:700;letter-spacing:.5px;vertical-align:middle}
+.scout-status{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;border:1px solid var(--border)}
+.scout-status-new{color:var(--accent);border-color:var(--accent)}
+.scout-status-contacted{color:#3b82f6;border-color:#3b82f6}
+.scout-status-pass{color:var(--text-ghost);border-color:var(--border)}
+.scout-meta{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text-dim);margin-bottom:6px}
+.scout-meta span{display:flex;align-items:center;gap:3px}
+.scout-growth{color:var(--success)!important;font-weight:600}
+.scout-links{font-size:10px;color:var(--text-ghost);margin-bottom:4px;word-break:break-all}
+.scout-notes{font-size:11px;color:var(--text-ghost);margin-bottom:8px;font-style:italic}
+.scout-actions{display:flex;gap:6px;flex-wrap:wrap}
+.scout-badge{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--accent);color:#131316;font-size:8px;font-weight:700;margin-left:3px;vertical-align:middle}

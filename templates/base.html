@@ -21,6 +21,7 @@
     <a href="/playlists" class="nav-link {% if request.path == '/playlists' %}active{% endif %}">Playlists</a>
     {% if session.get('role') == 'admin' %}
     <a href="/invoices" class="nav-link {% if request.path == '/invoices' %}active{% endif %}">Invoices</a>
+    <a href="/scout" class="nav-link {% if request.path == '/scout' %}active{% endif %}">Scout<span id="scout-badge" class="scout-badge" style="display:none"></span></a>
     {% endif %}
     <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">Settings</a>
   </div>
@@ -49,5 +50,13 @@
 <script src="/static/js/grid-engine.js?v=35"></script>
 <script src="/static/js/monitor.js?v=35"></script>
 {% block scripts %}{% endblock %}
+{% if session.get('role') == 'admin' %}
+<script>
+// Scout badge: show count of new leads
+fetch('/api/scout/count').then(r=>r.json()).then(d=>{
+  if(d.count>0){const b=document.getElementById('scout-badge');if(b){b.textContent=d.count;b.style.display='inline-flex'}}
+}).catch(()=>{});
+</script>
+{% endif %}
 </body>
 </html>

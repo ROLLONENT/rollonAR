@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Scout{% endblock %}
+{% block content %}
+<div class="scout-page">
+  <div class="scout-header">
+    <h1 style="font-family:var(--font-d);font-size:22px;color:var(--accent);margin-bottom:4px">Artist Scout</h1>
+    <p style="color:var(--text-dim);font-size:12px">Find collaborators, tour opportunities, and sync briefs. Cross-referenced with your Directory.</p>
+  </div>
+
+  <div class="scout-panels">
+    <!-- PANEL 1: RISING ARTISTS -->
+    <div class="scout-panel">
+      <div class="scout-panel-header">
+        <h2>Rising Artists</h2>
+        <button class="btn btn-sm btn-accent" onclick="addArtistLead()">+ Add Lead</button>
+      </div>
+      <div class="scout-filters" style="margin-bottom:12px">
+        <input type="text" class="search-input" id="artist-search" placeholder="Search by name, genre, city..." oninput="filterArtists()" style="width:200px">
+        <select id="artist-genre-filter" class="fi" onchange="filterArtists()" style="width:140px;padding:6px 8px;font-size:11px">
+          <option value="">All Genres</option>
+        </select>
+        <select id="artist-status-filter" class="fi" onchange="filterArtists()" style="width:140px;padding:6px 8px;font-size:11px">
+          <option value="">All Status</option>
+          <option value="New">New</option>
+          <option value="Contacted">Contacted</option>
+          <option value="In Directory">In Directory</option>
+          <option value="Pass">Pass</option>
+        </select>
+      </div>
+      <div id="artist-list" class="scout-list">
+        <div class="loading"><span class="skeleton" style="width:100%;height:60px;display:block;margin-bottom:8px"></span><span class="skeleton" style="width:100%;height:60px;display:block;margin-bottom:8px"></span><span class="skeleton" style="width:100%;height:60px;display:block"></span></div>
+      </div>
+    </div>
+
+    <!-- PANEL 2: TOUR OPPORTUNITIES -->
+    <div class="scout-panel">
+      <div class="scout-panel-header">
+        <h2>Tour Opportunities</h2>
+        <button class="btn btn-sm btn-accent" onclick="addTourLead()">+ Add Opportunity</button>
+      </div>
+      <div class="scout-filters" style="margin-bottom:12px">
+        <input type="text" class="search-input" id="tour-search" placeholder="Search headliner, city, venue..." oninput="filterTours()" style="width:200px">
+      </div>
+      <div id="tour-list" class="scout-list">
+        <div class="loading"><span class="skeleton" style="width:100%;height:60px;display:block;margin-bottom:8px"></span><span class="skeleton" style="width:100%;height:60px;display:block"></span></div>
+      </div>
+    </div>
+
+    <!-- PANEL 3: SYNC BRIEFS -->
+    <div class="scout-panel">
+      <div class="scout-panel-header">
+        <h2>Sync Briefs</h2>
+        <button class="btn btn-sm btn-accent" onclick="addSyncBrief()">+ Add Brief</button>
+      </div>
+      <div class="scout-filters" style="margin-bottom:12px">
+        <input type="text" class="search-input" id="sync-search" placeholder="Search project, supervisor, genre..." oninput="filterSyncBriefs()" style="width:200px">
+      </div>
+      <div id="sync-list" class="scout-list">
+        <div class="loading"><span class="skeleton" style="width:100%;height:60px;display:block;margin-bottom:8px"></span><span class="skeleton" style="width:100%;height:60px;display:block"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let allLeads={artists:[],tours:[],syncs:[]};
+
+function loadScout(){
+  fetch('/api/scout').then(r=>r.json()).then(d=>{
+    allLeads=d;
+    renderArtists(d.artists||[]);
+    renderTours(d.tours||[]);
+    renderSyncBriefs(d.syncs||[]);
+    // Populate genre filter from actual data
+    const genres=new Set();
+    (d.artists||[]).forEach(a=>{if(a.genre)(a.genre.split(/[|,]/).forEach(g=>{const t=g.trim();if(t)genres.add(t)}))});
+    const sel=document.getElementById('artist-genre-filter');
+    if(sel){sel.innerHTML='<option value="">All Genres</option>';
+      [...genres].sort().forEach(g=>{sel.innerHTML+=`<option value="${g}">${g}</option>`})}
+  }).catch(()=>{
+    document.getElementById('artist-list').innerHTML='<div class="empty-state"><div class="empty-msg">Could not load scout data</div></div>';
+    document.getElementById('tour-list').innerHTML='<div class="empty-state"><div class="empty-msg">Could not load scout data</div></div>';
+    document.getElementById('sync-list').innerHTML='<div class="empty-state"><div class="empty-msg">Could not load scout data</div></div>';
+  });
+}
+
+function renderArtists(artists){
+  const el=document.getElementById('artist-list');
+  if(!artists.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-msg">No artist leads yet. Click + Add Lead to start scouting.</div></div>';return}
+  el.innerHTML=artists.map((a,i)=>{
+    const inDir=a.in_directory;
+    const warm=a.warm_lead;
+    return `<div class="scout-card${inDir?' scout-in-dir':''}">
+      <div class="scout-card-top">
+        <div class="scout-name">${esc(a.name)}${warm?'<span class="scout-warm" title="Known contact in Directory">WARM</span>':''}</div>
+        <div class="scout-status scout-status-${(a.status||'new').toLowerCase()}">${esc(a.status||'New')}</div>
+      </div>
+      <div class="scout-meta">
+        ${a.genre?'<span>'+esc(a.genre)+'</span>':''}
+        ${a.city?'<span>'+esc(a.city)+'</span>':''}
+        ${a.listeners?'<span>'+Number(a.listeners).toLocaleString()+' listeners</span>':''}
+        ${a.growth?'<span class="scout-growth">'+esc(a.growth)+'</span>':''}
+      </div>
+      ${a.social?'<div class="scout-links">'+esc(a.social)+'</div>':''}
+      ${a.notes?'<div class="scout-notes">'+esc(a.notes)+'</div>':''}
+      <div class="scout-actions">
+        ${!inDir?`<button class="btn btn-sm btn-accent" onclick="addToDirectory(${a.row_index})">Add to Directory</button>`:`<span style="font-size:10px;color:var(--success)">In Directory</span>`}
+        <button class="btn btn-sm" onclick="updateLeadStatus(${a.row_index},'Contacted')">Mark Contacted</button>
+        <button class="btn btn-sm" onclick="updateLeadStatus(${a.row_index},'Pass')" style="opacity:.6">Pass</button>
+      </div>
+    </div>`}).join('');
+}
+
+function renderTours(tours){
+  const el=document.getElementById('tour-list');
+  if(!tours.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎤</div><div class="empty-msg">No tour opportunities yet. Click + Add Opportunity to start tracking.</div></div>';return}
+  el.innerHTML=tours.map(t=>{
+    const warm=t.warm_lead;
+    return `<div class="scout-card">
+      <div class="scout-card-top">
+        <div class="scout-name">${esc(t.headliner||t.name)}${warm?'<span class="scout-warm">WARM</span>':''}</div>
+        <div class="scout-status">${esc(t.status||'Open')}</div>
+      </div>
+      <div class="scout-meta">
+        ${t.dates?'<span>'+esc(t.dates)+'</span>':''}
+        ${t.cities?'<span>'+esc(t.cities)+'</span>':''}
+        ${t.venue?'<span>'+esc(t.venue)+'</span>':''}
+        ${t.capacity?'<span>Cap: '+esc(t.capacity)+'</span>':''}
+      </div>
+      ${t.agent_contact?'<div class="scout-notes">Agent/Mgmt: '+esc(t.agent_contact)+'</div>':''}
+      ${t.notes?'<div class="scout-notes">'+esc(t.notes)+'</div>':''}
+      <div class="scout-actions">
+        <button class="btn btn-sm btn-accent" onclick="addTourToCalendar(${t.row_index})">Add to Calendar</button>
+        <button class="btn btn-sm" onclick="updateLeadStatus(${t.row_index},'Applied')">Mark Applied</button>
+      </div>
+    </div>`}).join('');
+}
+
+function renderSyncBriefs(syncs){
+  const el=document.getElementById('sync-list');
+  if(!syncs.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎬</div><div class="empty-msg">No sync briefs yet. Click + Add Brief to track opportunities.</div></div>';return}
+  el.innerHTML=syncs.map(s=>{
+    const warm=s.warm_lead;
+    return `<div class="scout-card">
+      <div class="scout-card-top">
+        <div class="scout-name">${esc(s.project||s.name)}${warm?'<span class="scout-warm">WARM</span>':''}</div>
+        <div class="scout-status">${esc(s.status||'Open')}</div>
+      </div>
+      <div class="scout-meta">
+        ${s.supervisor?'<span>Sup: '+esc(s.supervisor)+'</span>':''}
+        ${s.genre?'<span>'+esc(s.genre)+'</span>':''}
+        ${s.mood?'<span>'+esc(s.mood)+'</span>':''}
+        ${s.deadline?'<span>Due: '+esc(s.deadline)+'</span>':''}
+      </div>
+      ${s.notes?'<div class="scout-notes">'+esc(s.notes)+'</div>':''}
+      <div class="scout-actions">
+        <button class="btn btn-sm btn-accent" onclick="pitchForBrief(${s.row_index},'${escA(s.genre||'')}','${escA(s.mood||'')}')">Pitch for Brief</button>
+        <button class="btn btn-sm" onclick="updateLeadStatus(${s.row_index},'Pitched')">Mark Pitched</button>
+      </div>
+    </div>`}).join('');
+}
+
+function filterArtists(){
+  const q=(document.getElementById('artist-search')?.value||'').toLowerCase();
+  const genre=document.getElementById('artist-genre-filter')?.value||'';
+  const status=document.getElementById('artist-status-filter')?.value||'';
+  let filtered=(allLeads.artists||[]).filter(a=>{
+    if(q&&!JSON.stringify(a).toLowerCase().includes(q))return false;
+    if(genre&&!(a.genre||'').includes(genre))return false;
+    if(status&&(a.status||'New')!==status)return false;
+    return true;
+  });
+  renderArtists(filtered);
+}
+function filterTours(){
+  const q=(document.getElementById('tour-search')?.value||'').toLowerCase();
+  renderTours((allLeads.tours||[]).filter(t=>!q||JSON.stringify(t).toLowerCase().includes(q)));
+}
+function filterSyncBriefs(){
+  const q=(document.getElementById('sync-search')?.value||'').toLowerCase();
+  renderSyncBriefs((allLeads.syncs||[]).filter(s=>!q||JSON.stringify(s).toLowerCase().includes(q)));
+}
+
+function addArtistLead(){
+  showPromptModal('Add Artist Lead',[
+    {label:'Artist Name (required)',placeholder:'e.g. Raye, Holly Humberstone'},
+    {label:'Genre',placeholder:'Alt Pop, Indie, Dance Pop'},
+    {label:'City',placeholder:'London, LA, Nashville'},
+    {label:'Monthly Listeners',placeholder:'e.g. 500000'},
+    {label:'Growth Trend',placeholder:'e.g. +25% MoM'},
+    {label:'Social Links',placeholder:'Instagram, Spotify, TikTok URLs'},
+    {label:'Notes',placeholder:'Why this artist? Collab angle?'},
+    {label:'Tags',placeholder:'Scout Target | Songwriting'},
+  ],(v)=>{
+    if(!v[0])return;
+    fetch('/api/scout/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      type:'artist',name:v[0],genre:v[1],city:v[2],listeners:v[3],growth:v[4],social:v[5],notes:v[6],tags:v[7]||'Scout Target | Songwriting'
+    })}).then(r=>r.json()).then(d=>{if(d.success){toast('Artist lead added');loadScout()}else toast(d.error,'error')});
+  });
+}
+
+function addTourLead(){
+  showPromptModal('Add Tour Opportunity',[
+    {label:'Headliner (required)',placeholder:'Artist or band name'},
+    {label:'Dates',placeholder:'e.g. Sep 15-20, 2026'},
+    {label:'Cities',placeholder:'London, Manchester, Dublin'},
+    {label:'Venues',placeholder:'O2 Forum, Roundhouse'},
+    {label:'Capacity',placeholder:'e.g. 2000'},
+    {label:'Agent/Manager Contact',placeholder:'Name if known'},
+    {label:'Notes',placeholder:'Support slot available? Genre fit?'},
+  ],(v)=>{
+    if(!v[0])return;
+    fetch('/api/scout/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      type:'tour',name:v[0],headliner:v[0],dates:v[1],cities:v[2],venue:v[3],capacity:v[4],agent_contact:v[5],notes:v[6]
+    })}).then(r=>r.json()).then(d=>{if(d.success){toast('Tour opportunity added');loadScout()}else toast(d.error,'error')});
+  });
+}
+
+function addSyncBrief(){
+  showPromptModal('Add Sync Brief',[
+    {label:'Project Name (required)',placeholder:'e.g. Netflix Series, Adidas Campaign'},
+    {label:'Music Supervisor',placeholder:'Name if known'},
+    {label:'Genre Requested',placeholder:'Indie Pop, Electronic, Alt'},
+    {label:'Mood/Vibe',placeholder:'Uplifting, Dark, Nostalgic'},
+    {label:'Deadline',placeholder:'YYYY-MM-DD'},
+    {label:'Notes',placeholder:'Brief details, budget, placement type'},
+  ],(v)=>{
+    if(!v[0])return;
+    fetch('/api/scout/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      type:'sync',name:v[0],project:v[0],supervisor:v[1],genre:v[2],mood:v[3],deadline:v[4],notes:v[5]
+    })}).then(r=>r.json()).then(d=>{if(d.success){toast('Sync brief added');loadScout()}else toast(d.error,'error')});
+  });
+}
+
+function addToDirectory(ri){
+  fetch('/api/scout/to-directory',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({row_index:ri})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success){toast('Added to Directory: '+d.name+(d.id?' ('+d.id+')':''));loadScout()}
+    else toast(d.error||'Failed','error');
+  });
+}
+
+function addTourToCalendar(ri){
+  toast('Tour added to follow-up queue');
+  updateLeadStatus(ri,'Tracking');
+}
+
+function pitchForBrief(ri,genre,mood){
+  // Pre-load pitch page with genre/mood filter
+  let url='/pitch?';
+  if(genre)url+=`genre=${encodeURIComponent(genre)}&`;
+  if(mood)url+=`mood=${encodeURIComponent(mood)}`;
+  window.location.href=url;
+}
+
+function updateLeadStatus(ri,status){
+  fetch('/api/scout/update',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({row_index:ri,field:'Status',value:status})
+  }).then(r=>r.json()).then(d=>{if(d.success){toast('Status: '+status);loadScout()}});
+}
+
+// Load on page ready
+loadScout();
+</script>
+{% endblock %}

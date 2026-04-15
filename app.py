@@ -3491,6 +3491,262 @@ def api_briefing():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== SCOUT (Intelligence Engine) ====================
+SCOUT_HEADERS = ['Type', 'Name', 'Genre', 'City', 'Listeners', 'Growth', 'Social',
+                 'Notes', 'Tags', 'Status', 'Headliner', 'Dates', 'Cities', 'Venue',
+                 'Capacity', 'Agent Contact', 'Project', 'Supervisor', 'Mood',
+                 'Deadline', 'Date Added']
+
+def _ensure_scout_sheet():
+    """Create Scout Leads sheet if it doesn't exist."""
+    try:
+        data = sheets.get_all_rows('Scout Leads')
+        if data: return True
+    except: pass
+    try:
+        sheets.create_new_sheet('Scout Leads')
+        sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Scout Leads'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [SCOUT_HEADERS]}
+        ).execute()
+        sheets._invalidate_cache('Scout Leads')
+        return True
+    except Exception as e:
+        logging.warning(f"Scout sheet creation failed: {e}")
+        return False
+
+@app.route('/scout')
+@admin_required
+def scout_page():
+    return render_template('scout.html')
+
+@app.route('/api/scout')
+@admin_required
+def api_scout():
+    """Get all scout leads, cross-referenced with Directory."""
+    _ensure_scout_sheet()
+    try:
+        data = sheets.get_all_rows('Scout Leads')
+        if not data or len(data) < 2:
+            return jsonify({'artists': [], 'tours': [], 'syncs': []})
+
+        headers = data[0]
+        rows = data[1:]
+
+        # Build name lookup from Personnel for cross-referencing
+        dir_names = set()
+        try:
+            per_data = sheets.get_all_rows('Personnel')
+            if per_data and len(per_data) > 1:
+                nc = find_col(per_data[0], 'name')
+                if nc is not None:
+                    for r in per_data[1:]:
+                        if nc < len(r) and r[nc].strip():
+                            dir_names.add(r[nc].strip().lower())
+        except: pass
+
+        # Build music supervisor lookup for sync brief cross-referencing
+        music_sups = set()
+        try:
+            if per_data and len(per_data) > 1:
+                fc = find_col(per_data[0], 'field')
+                nc2 = find_col(per_data[0], 'name')
+                if fc is not None and nc2 is not None:
+                    for r in per_data[1:]:
+                        field_val = str(r[fc]).lower() if fc < len(r) else ''
+                        if 'music supervisor' in field_val or 'sync' in field_val:
+                            if nc2 < len(r) and r[nc2].strip():
+                                music_sups.add(r[nc2].strip().lower())
+        except: pass
+
+        artists, tours, syncs = [], [], []
+        for i, row in enumerate(rows):
+            rec = {}
+            for j, h in enumerate(headers):
+                rec[cleanH(h).lower().replace(' ', '_')] = row[j].strip() if j < len(row) else ''
+            rec['row_index'] = i + 2
+
+            name = rec.get('name', '')
+            rec['in_directory'] = name.lower() in dir_names if name else False
+
+            lead_type = rec.get('type', '').lower()
+
+            if lead_type == 'artist':
+                rec['warm_lead'] = rec['in_directory']
+                artists.append(rec)
+            elif lead_type == 'tour':
+                # Check if headliner's agent/manager is in our Directory
+                headliner = rec.get('headliner', '')
+                agent = rec.get('agent_contact', '')
+                rec['warm_lead'] = (headliner.lower() in dir_names or agent.lower() in dir_names) if (headliner or agent) else False
+                tours.append(rec)
+            elif lead_type == 'sync':
+                # Check if supervisor is in our Directory
+                sup = rec.get('supervisor', '')
+                rec['warm_lead'] = sup.lower() in music_sups if sup else False
+                syncs.append(rec)
+
+        return jsonify({'artists': artists, 'tours': tours, 'syncs': syncs})
+    except Exception as e:
+        logging.warning(f"Scout API error: {e}")
+        return jsonify({'artists': [], 'tours': [], 'syncs': [], 'error': str(e)})
+
+
+@app.route('/api/scout/add', methods=['POST'])
+@admin_required
+def api_scout_add():
+    """Add a new scout lead."""
+    _ensure_scout_sheet()
+    d = request.json or {}
+    name = d.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Name is required'}), 400
+    try:
+        headers = sheets.get_headers('Scout Leads')
+        row = [''] * len(headers)
+        # Map incoming fields to sheet columns
+        field_map = {
+            'type': 'Type', 'name': 'Name', 'genre': 'Genre', 'city': 'City',
+            'listeners': 'Listeners', 'growth': 'Growth', 'social': 'Social',
+            'notes': 'Notes', 'tags': 'Tags', 'status': 'Status',
+            'headliner': 'Headliner', 'dates': 'Dates', 'cities': 'Cities',
+            'venue': 'Venue', 'capacity': 'Capacity', 'agent_contact': 'Agent Contact',
+            'project': 'Project', 'supervisor': 'Supervisor', 'mood': 'Mood',
+            'deadline': 'Deadline'
+        }
+        for json_key, sheet_col in field_map.items():
+            if json_key in d and d[json_key]:
+                ci = find_col(headers, sheet_col)
+                if ci is not None:
+                    row[ci] = str(d[json_key]).strip()
+        # Set status default
+        status_col = find_col(headers, 'status')
+        if status_col is not None and not row[status_col]:
+            row[status_col] = 'New'
+        # Date added
+        da_col = find_col(headers, 'date added')
+        if da_col is not None:
+            row[da_col] = datetime.now().strftime('%Y-%m-%d')
+
+        sheets.append_row('Scout Leads', row)
+        return jsonify({'success': True, 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scout/update', methods=['POST'])
+@admin_required
+def api_scout_update():
+    """Update a scout lead field."""
+    d = request.json or {}
+    ri = d.get('row_index')
+    field = d.get('field', '')
+    value = d.get('value', '')
+    if not ri or not field:
+        return jsonify({'error': 'row_index and field required'}), 400
+    try:
+        headers = sheets.get_headers('Scout Leads')
+        ci = find_col(headers, field)
+        if ci is None:
+            return jsonify({'error': f'Field {field} not found'}), 400
+        sheets.update_cell('Scout Leads', ri, ci + 1, value)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scout/to-directory', methods=['POST'])
+@admin_required
+def api_scout_to_directory():
+    """Convert a scout artist lead to a Personnel record."""
+    d = request.json or {}
+    ri = d.get('row_index')
+    if not ri:
+        return jsonify({'error': 'row_index required'}), 400
+    try:
+        scout_headers = sheets.get_headers('Scout Leads')
+        row = sheets.get_row('Scout Leads', ri)
+        rec = {}
+        for j, h in enumerate(scout_headers):
+            rec[cleanH(h).lower().replace(' ', '_')] = row[j].strip() if j < len(row) else ''
+
+        name = rec.get('name', '')
+        if not name:
+            return jsonify({'error': 'No name on this lead'}), 400
+
+        # Check for duplicates
+        per_data = sheets.get_all_rows('Personnel')
+        if per_data and len(per_data) > 1:
+            nc = find_col(per_data[0], 'name')
+            if nc is not None:
+                for r in per_data[1:]:
+                    if nc < len(r) and r[nc].strip().lower() == name.lower():
+                        # Already exists - update status and return
+                        status_col = find_col(scout_headers, 'status')
+                        if status_col is not None:
+                            sheets.update_cell('Scout Leads', ri, status_col + 1, 'In Directory')
+                        return jsonify({'success': True, 'name': name, 'note': 'Already in Directory'})
+
+        # Create new Personnel record
+        per_headers = sheets.get_headers('Personnel')
+        new_row = [''] * len(per_headers)
+
+        # Map scout fields to Personnel fields
+        nc = find_col(per_headers, 'name')
+        if nc is not None: new_row[nc] = name
+        gc = find_col(per_headers, 'genre')
+        if gc is not None: new_row[gc] = rec.get('genre', '')
+        cc = find_col(per_headers, 'city')
+        if cc is not None: new_row[cc] = rec.get('city', '')
+        fc = find_col(per_headers, 'field')
+        if fc is not None: new_row[fc] = 'Artist'
+        tc = find_col(per_headers, 'tags')
+        if tc is not None:
+            tags = rec.get('tags', 'Scout Target | Songwriting')
+            new_row[tc] = tags
+
+        # System ID
+        id_col = find_col(per_headers, 'airtable id', 'system id')
+        if id_col is not None:
+            new_row[id_col] = next_system_id()
+        # LinkedIn/Socials from social field
+        lc = find_col(per_headers, 'linkedin/socials', 'linkedin', 'website')
+        if lc is not None: new_row[lc] = rec.get('social', '')
+
+        sheets.append_row('Personnel', new_row)
+        build_name_cache()  # Rebuild so the new person appears immediately
+
+        # Update scout lead status
+        status_col = find_col(scout_headers, 'status')
+        if status_col is not None:
+            sheets.update_cell('Scout Leads', ri, status_col + 1, 'In Directory')
+
+        return jsonify({'success': True, 'name': name, 'id': new_row[id_col] if id_col else ''})
+    except Exception as e:
+        logging.exception('Scout to directory failed')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scout/count')
+@admin_required
+def api_scout_count():
+    """Get count of new scout leads for badge."""
+    try:
+        data = sheets.get_all_rows('Scout Leads')
+        if not data or len(data) < 2:
+            return jsonify({'count': 0})
+        headers = data[0]
+        sc = find_col(headers, 'status')
+        count = 0
+        for row in data[1:]:
+            status = str(row[sc]).strip().lower() if sc is not None and sc < len(row) else 'new'
+            if status == 'new':
+                count += 1
+        return jsonify({'count': count})
+    except:
+        return jsonify({'count': 0})
+
+
 @app.errorhandler(404)
 def not_found(e): return render_template('404.html'), 404
 
