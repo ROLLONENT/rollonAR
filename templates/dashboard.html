@@ -46,6 +46,11 @@
     <div class="dash-chart" id="chart-briefing"><h3>Morning Briefing</h3><div class="loading"><span class="spinner"></span></div></div>
     <div class="dash-chart" id="chart-overdue"><h3>Invoice Alerts</h3><div class="loading"><span class="spinner"></span></div></div>
   </div>
+
+  <div class="dash-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="dash-chart" id="chart-new-submissions"><h3>New Submissions</h3><div class="loading"><span class="spinner"></span></div></div>
+    <div class="dash-chart" id="chart-relationship-decay"><h3>Relationship Decay</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -157,6 +162,48 @@ fetch('/api/briefing').then(r=>r.json()).then(d=>{
     oh+='<div style="font-size:11px;color:var(--success)">No invoice alerts</div>';
   }
   oc.innerHTML=oh;
+
+  // New Submissions card
+  const nsc=document.getElementById('chart-new-submissions');
+  let nsHtml='<h3>New Submissions</h3>';
+  if(d.new_submissions?.length){
+    nsHtml+=`<div style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px">${d.new_submissions.length} new submission${d.new_submissions.length>1?'s':''}</div>`;
+    d.new_submissions.forEach(s=>{
+      nsHtml+=`<div class="upcoming-item" onclick="window.location.href='/songs?search=${encodeURIComponent(s.title)}'" style="cursor:pointer"><span class="upcoming-title">${s.title}</span></div>`;
+    });
+  } else {
+    nsHtml+='<div style="font-size:11px;color:var(--text-ghost)">No new submissions in the last 48 hours</div>';
+  }
+  nsc.innerHTML=nsHtml;
+
+  // Suggested action
+  if(d.suggested_action){
+    const sa=d.suggested_action;
+    const briefEl=document.getElementById('chart-briefing');
+    if(briefEl){
+      briefEl.innerHTML+='<div style="margin-top:10px;padding:8px 12px;background:rgba(212,168,83,0.1);border:1px solid var(--accent);border-radius:var(--r-md);font-size:12px"><span style="color:var(--accent);font-weight:600">Priority: </span>'+sa.label+'</div>';
+    }
+  }
+
+  // Relationship Decay
+  const rdc=document.getElementById('chart-relationship-decay');
+  let rdHtml='<h3>Relationship Decay</h3>';
+  if(d.relationship_decay?.length){
+    rdHtml+=`<div style="font-size:11px;color:var(--text-ghost);margin-bottom:6px">${d.relationship_decay.length} contacts losing touch</div>`;
+    d.relationship_decay.slice(0,8).forEach(c=>{
+      const daysLabel=c.days_since>0?c.days_since+'d ago':'No record';
+      const urgency=c.days_since>60?'var(--danger)':c.days_since>30?'#e0a030':'var(--text-ghost)';
+      rdHtml+=`<div class="reminder-item" onclick="window.location.href='/directory?search=${encodeURIComponent(c.name)}'" style="cursor:pointer">`;
+      rdHtml+=`<span class="reminder-name">${c.name}</span>`;
+      rdHtml+=`<span style="color:var(--text-ghost);font-size:10px">${c.field}</span>`;
+      rdHtml+=`<span class="reminder-days" style="color:${urgency}">${daysLabel}</span>`;
+      rdHtml+=`</div>`;
+      rdHtml+=`<div style="font-size:10px;color:var(--text-dim);margin:-4px 0 6px 0;padding-left:4px">${c.suggestion}</div>`;
+    });
+  } else {
+    rdHtml+='<div style="font-size:11px;color:var(--success)">All key relationships are active</div>';
+  }
+  rdc.innerHTML=rdHtml;
 }).catch(()=>{});
 </script>
 {% endblock %}

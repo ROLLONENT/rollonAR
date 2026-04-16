@@ -18,6 +18,7 @@
     <a href="/directory" class="nav-link {% if request.path == '/directory' %}active{% endif %}">Directory</a>
     <a href="/pitch" class="nav-link {% if request.path == '/pitch' %}active{% endif %}">Pitch</a>
     <a href="/calendar" class="nav-link {% if request.path == '/calendar' %}active{% endif %}">Calendar</a>
+    <a href="/insights" class="nav-link {% if request.path == '/insights' %}active{% endif %}">Insights</a>
     <a href="/playlists" class="nav-link {% if request.path == '/playlists' %}active{% endif %}">Playlists</a>
     {% if session.get('role') == 'admin' %}
     <a href="/invoices" class="nav-link {% if request.path == '/invoices' %}active{% endif %}">Invoices</a>

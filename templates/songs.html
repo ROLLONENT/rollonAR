@@ -340,6 +340,29 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
       wirePromptTypeahead(9,'Personnel',true);   // Songwriter Credits (multi)
       wirePromptTypeahead(10,'Personnel',false);  // Vocalist
       wirePromptTypeahead(18,'Record Labels',false); // Record Label
+      // Smart defaults: when Producer is entered, auto-fill Genre if empty
+      const prodField=document.querySelectorAll('.prompt-modal .fi')[2];
+      if(prodField){
+        let _sdTimer=null;
+        prodField.addEventListener('input',function(){
+          clearTimeout(_sdTimer);
+          const val=this.value.trim();
+          if(!val||val.length<2)return;
+          _sdTimer=setTimeout(()=>{
+            fetch('/api/intelligence/smart-defaults?producer='+encodeURIComponent(val))
+              .then(r=>r.json()).then(d=>{
+                if(d.top_genres&&d.top_genres.length){
+                  const genreField=document.querySelectorAll('.prompt-modal .fi')[4];
+                  if(genreField&&!genreField.value.trim()){
+                    genreField.value=d.top_genres[0].genre;
+                    genreField.style.borderColor='var(--accent)';
+                    setTimeout(()=>{genreField.style.borderColor=''},2000);
+                  }
+                }
+              }).catch(()=>{});
+          },600);
+        });
+      }
     },100);
     })}
 };

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Insights{% endblock %}
+{% block content %}
+<div class="page-layout" style="padding:16px 24px">
+  <div style="margin-bottom:20px">
+    <h1 style="font-family:var(--font-d);font-size:22px;color:var(--accent);margin-bottom:4px">Insights</h1>
+    <p style="color:var(--text-dim);font-size:12px">Pitch analytics and songwriter productivity from your real data.</p>
+  </div>
+
+  <!-- Pitch Analytics Section -->
+  <div style="margin-bottom:32px">
+    <h2 style="font-family:var(--font-d);font-size:14px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Pitch Analytics</h2>
+    <div id="pitch-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+      <div class="dash-card"><h3>Total Pitches</h3><div class="dash-num" id="stat-total">-</div></div>
+      <div class="dash-card"><h3>Response Rate</h3><div class="dash-num" id="stat-response">-</div></div>
+      <div class="dash-card"><h3>Placement Rate</h3><div class="dash-num" id="stat-placement">-</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="dash-chart" id="chart-genre-pitches"><h3>Pitches by Genre</h3><div class="loading"><span class="spinner"></span></div></div>
+      <div class="dash-chart" id="chart-monthly-trend"><h3>Monthly Trend</h3><div class="loading"><span class="spinner"></span></div></div>
+    </div>
+    <div class="dash-chart" id="chart-patterns" style="margin-bottom:16px"><h3>Pattern Insights</h3><div class="loading"><span class="spinner"></span></div></div>
+  </div>
+
+  <!-- Songwriter Productivity Section -->
+  <div>
+    <h2 style="font-family:var(--font-d);font-size:14px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-ghost);margin-bottom:12px">Songwriter Productivity</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="dash-chart" id="chart-pairings"><h3>Top Writing Pairings</h3><div class="loading"><span class="spinner"></span></div></div>
+      <div class="dash-chart" id="chart-solo"><h3>Solo Writers</h3><div class="loading"><span class="spinner"></span></div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Pitch Analytics
+fetch('/api/intelligence/pitch-insights').then(r=>r.json()).then(d=>{
+  if(d.error){document.getElementById('chart-patterns').innerHTML='<h3>Pattern Insights</h3><p style="color:var(--danger);font-size:12px;padding:8px">'+d.error+'</p>';return}
+
+  document.getElementById('stat-total').textContent=d.total_pitches;
+  document.getElementById('stat-response').textContent=d.response_rate+'%';
+  document.getElementById('stat-placement').textContent=d.placement_rate+'%';
+
+  // Genre chart
+  const gc=document.getElementById('chart-genre-pitches');
+  if(d.by_genre&&d.by_genre.length){
+    const max=Math.max(...d.by_genre.map(g=>g.count),1);
+    gc.innerHTML='<h3>Pitches by Genre</h3>'+d.by_genre.map(g=>{
+      return `<div class="chart-bar"><span class="chart-bar-label">${g.genre}</span><div class="chart-bar-fill" style="width:${Math.max(g.count/max*100,2)}%"></div><span class="chart-bar-count">${g.count} <span style="color:var(--text-ghost);font-size:10px">(${g.rate}% resp)</span></span></div>`;
+    }).join('');
+  } else {
+    gc.innerHTML='<h3>Pitches by Genre</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No genre data available.</p>';
+  }
+
+  // Monthly trend
+  const mc=document.getElementById('chart-monthly-trend');
+  if(d.by_month&&d.by_month.length){
+    const max2=Math.max(...d.by_month.map(m=>m.count),1);
+    mc.innerHTML='<h3>Monthly Trend</h3>'+d.by_month.map(m=>{
+      return `<div class="chart-bar"><span class="chart-bar-label">${m.month}</span><div class="chart-bar-fill" style="width:${Math.max(m.count/max2*100,2)}%"></div><span class="chart-bar-count">${m.count} sent, ${m.responses} resp</span></div>`;
+    }).join('');
+  } else {
+    mc.innerHTML='<h3>Monthly Trend</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No monthly data.</p>';
+  }
+
+  // Patterns
+  const pc=document.getElementById('chart-patterns');
+  if(d.patterns&&d.patterns.length){
+    pc.innerHTML='<h3>Pattern Insights</h3><div style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0">'+d.patterns.map(p=>{
+      return `<div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;font-size:12px;color:var(--text);flex:1;min-width:200px">${p}</div>`;
+    }).join('')+'</div>';
+  } else {
+    pc.innerHTML='<h3>Pattern Insights</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">Not enough data for patterns.</p>';
+  }
+}).catch(e=>{
+  console.error('Pitch insights error:',e);
+  document.getElementById('chart-genre-pitches').innerHTML='<h3>Pitches by Genre</h3><p style="color:var(--danger);font-size:12px;padding:8px">Failed to load pitch data.</p>';
+});
+
+// Songwriter Productivity
+fetch('/api/intelligence/songwriter-productivity').then(r=>r.json()).then(d=>{
+  // Pairings table
+  const pc=document.getElementById('chart-pairings');
+  if(d.pairings&&d.pairings.length){
+    let html='<h3>Top Writing Pairings</h3><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:var(--text-ghost);text-align:left;border-bottom:1px solid var(--border)"><th style="padding:6px 8px">Writers</th><th style="padding:6px 4px">Songs</th><th style="padding:6px 4px">Released</th><th style="padding:6px 4px">Avg Days</th></tr></thead><tbody>';
+    d.pairings.forEach(p=>{
+      html+=`<tr style="border-bottom:1px solid var(--border-dim)"><td style="padding:6px 8px;color:var(--accent)">${p.writers}</td><td style="padding:6px 4px">${p.song_count}</td><td style="padding:6px 4px">${p.released_count}</td><td style="padding:6px 4px">${p.avg_days_to_release!==null?p.avg_days_to_release+'d':'-'}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    pc.innerHTML=html;
+  } else {
+    pc.innerHTML='<h3>Top Writing Pairings</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No co-writing data found.</p>';
+  }
+
+  // Solo writers
+  const sc=document.getElementById('chart-solo');
+  if(d.solo_writers&&d.solo_writers.length){
+    let html='<h3>Solo Writers</h3><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="color:var(--text-ghost);text-align:left;border-bottom:1px solid var(--border)"><th style="padding:6px 8px">Writer</th><th style="padding:6px 4px">Songs</th><th style="padding:6px 4px">Released</th></tr></thead><tbody>';
+    d.solo_writers.forEach(s=>{
+      html+=`<tr style="border-bottom:1px solid var(--border-dim)"><td style="padding:6px 8px;color:var(--accent)">${s.name}</td><td style="padding:6px 4px">${s.song_count}</td><td style="padding:6px 4px">${s.released_count}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    sc.innerHTML=html;
+  } else {
+    sc.innerHTML='<h3>Solo Writers</h3><p style="color:var(--text-ghost);font-size:12px;padding:8px">No solo writer data found.</p>';
+  }
+}).catch(e=>{
+  console.error('Songwriter productivity error:',e);
+  document.getElementById('chart-pairings').innerHTML='<h3>Top Writing Pairings</h3><p style="color:var(--danger);font-size:12px;padding:8px">Failed to load data.</p>';
+});
+</script>
+{% endblock %}

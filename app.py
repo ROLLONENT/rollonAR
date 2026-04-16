@@ -79,8 +79,8 @@ if not APP_PASSWORD:
 
 # Roles: 'admin' = full access (Celina), 'assistant' = no invoices
 ROLE_PAGES = {
-    'admin': ['dashboard','songs','directory','pitch','invoices','settings','submit'],
-    'assistant': ['dashboard','songs','directory','pitch','settings']
+    'admin': ['dashboard','songs','directory','pitch','invoices','insights','settings','submit'],
+    'assistant': ['dashboard','songs','directory','pitch','insights','settings']
 }
 
 # Simple rate limiter for public endpoints (per IP)
@@ -1157,6 +1157,10 @@ def songs(): return render_template('songs.html')
 @app.route('/calendar')
 @login_required
 def calendar_view(): return render_template('calendar.html')
+
+@app.route('/insights')
+@login_required
+def insights_page(): return render_template('insights.html')
 
 @app.route('/search')
 @login_required
@@ -3859,7 +3863,601 @@ def api_briefing():
         except Exception as e:
             logging.warning(f'Overdue invoice count: {e}')
 
+        # --- New Submissions (Tag contains "New Submission", modified within 48h) ---
+        try:
+            new_subs = []
+            if song_data and len(song_data) > 1:
+                sh = song_data[0]
+                tag_col = find_col(sh, 'tag', 'tags')
+                ti_col2 = find_col(sh, 'title')
+                lm_col2 = find_col(sh, 'last modified')
+                if tag_col is not None and ti_col2 is not None:
+                    for i, row in enumerate(song_data[1:]):
+                        tags_val = str(row[tag_col]).strip().lower() if tag_col < len(row) else ''
+                        if 'new submission' not in tags_val:
+                            continue
+                        title = str(row[ti_col2]).strip() if ti_col2 < len(row) else ''
+                        lm_str = str(row[lm_col2]).strip() if lm_col2 is not None and lm_col2 < len(row) else ''
+                        within_48h = True
+                        if lm_str:
+                            for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M'):
+                                try:
+                                    d = datetime.strptime(lm_str, fmt)
+                                    within_48h = (now - d).total_seconds() < 48 * 3600
+                                    break
+                                except Exception:
+                                    pass
+                        if within_48h and title:
+                            new_subs.append({'title': title, 'row_index': i + 2})
+            result['new_submissions'] = new_subs
+        except Exception as e:
+            logging.warning(f'New submissions: {e}')
+
+        # --- Suggested Action (single most urgent item) ---
+        try:
+            candidates = []
+            for s in result.get('stale_songs', []):
+                candidates.append({'type': 'stale_song', 'label': f"Song \"{s['title']}\" has been stale for {s['days']} days", 'urgency': s['days']})
+            if result.get('overdue_invoices', {}).get('count', 0) > 0:
+                candidates.append({'type': 'overdue_invoice', 'label': f"{result['overdue_invoices']['count']} overdue invoices totalling ${result['overdue_invoices']['amount']:,.2f}", 'urgency': result['overdue_invoices']['amount']})
+            for inv in result.get('upcoming_invoices', []):
+                if inv.get('days', 99) <= 1:
+                    candidates.append({'type': 'invoice_due', 'label': f"Invoice {inv['invoice_no']} for {inv['client']} due {'TODAY' if inv['days']==0 else 'tomorrow'}", 'urgency': 1000})
+            if candidates:
+                candidates.sort(key=lambda x: -x['urgency'])
+                result['suggested_action'] = candidates[0]
+        except Exception as e:
+            logging.warning(f'Suggested action: {e}')
+
+        # --- Relationship Decay (top 20 contacts scored, flag if >30 days) ---
+        try:
+            decay_list = []
+            per_data = sheets.get_all_rows('Personnel')
+            if per_data and len(per_data) > 1:
+                ph = per_data[0]
+                pn_col = find_col(ph, 'name')
+                pf_col = find_col(ph, 'field')
+                pt_col = find_col(ph, 'tier')
+                po_col = find_col(ph, 'last outreach', 'last contact')
+                pe_col = find_col(ph, 'email')
+
+                # Build song count per person
+                song_person_counts = {}
+                if song_data and len(song_data) > 1:
+                    s_h = song_data[0]
+                    for col_name in ['producer', 'artist', 'vocalist', 'songwriter credits']:
+                        cc = find_col(s_h, col_name)
+                        if cc is None:
+                            continue
+                        for srow in song_data[1:]:
+                            val = str(srow[cc]).strip() if cc < len(srow) else ''
+                            for p in split_tags(val):
+                                song_person_counts[p.lower()] = song_person_counts.get(p.lower(), 0) + 1
+
+                # Build pitch count per person
+                pitch_person_counts = {}
+                try:
+                    pitch_data = sheets.get_all_rows('Pitch Log')
+                    if pitch_data and len(pitch_data) > 1:
+                        pit_h = pitch_data[0]
+                        for j, h in enumerate(pit_h):
+                            for prow in pitch_data[1:]:
+                                val = str(prow[j]).strip() if j < len(prow) else ''
+                                for p in split_tags(val):
+                                    pitch_person_counts[p.lower()] = pitch_person_counts.get(p.lower(), 0) + 1
+                except Exception:
+                    pass
+
+                for i, prow in enumerate(per_data[1:]):
+                    pname = str(prow[pn_col]).strip() if pn_col is not None and pn_col < len(prow) else ''
+                    if not pname:
+                        continue
+                    pfield = str(prow[pf_col]).strip() if pf_col is not None and pf_col < len(prow) else ''
+                    tier_str = str(prow[pt_col]).strip() if pt_col is not None and pt_col < len(prow) else ''
+                    outreach_str = str(prow[po_col]).strip() if po_col is not None and po_col < len(prow) else ''
+
+                    tier_score = 0
+                    try:
+                        tier_score = int(tier_str)
+                    except (ValueError, TypeError):
+                        if 'a' in tier_str.lower():
+                            tier_score = 3
+                        elif 'b' in tier_str.lower():
+                            tier_score = 2
+                        elif 'c' in tier_str.lower():
+                            tier_score = 1
+
+                    sc_count = song_person_counts.get(pname.lower(), 0)
+                    pi_count = pitch_person_counts.get(pname.lower(), 0)
+                    score = sc_count * 3 + pi_count * 2 + tier_score
+
+                    days_since = None
+                    if outreach_str:
+                        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M'):
+                            try:
+                                od = datetime.strptime(outreach_str, fmt)
+                                days_since = (now - od).days
+                                break
+                            except Exception:
+                                pass
+
+                    if score > 0 and (days_since is None or days_since > 30):
+                        suggestion = 'Send a check-in' if days_since and days_since > 60 else 'Schedule a catch-up'
+                        if sc_count > 3:
+                            suggestion = f'Key collaborator ({sc_count} songs) — reconnect soon'
+                        decay_list.append({
+                            'name': pname, 'field': pfield,
+                            'days_since': days_since if days_since is not None else -1,
+                            'song_count': sc_count, 'score': score,
+                            'suggestion': suggestion, 'row_index': i + 2
+                        })
+
+                decay_list.sort(key=lambda x: -x['score'])
+                result['relationship_decay'] = decay_list[:20]
+        except Exception as e:
+            logging.warning(f'Relationship decay: {e}')
+
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== INTELLIGENCE API ENDPOINTS ====================
+
+@app.route('/api/intelligence/relationships/<name>')
+@login_required
+def api_intelligence_relationships(name):
+    """Relationship graph: find all connections for a contact name."""
+    try:
+        result = {'songs': [], 'collaborators': [], 'invoices': [], 'pitches': []}
+        nl = name.lower().strip()
+
+        # Songs where Producer, Artist, Vocalist, or Songwriter Credits contains name
+        song_data = sheets.get_all_rows('Songs')
+        if song_data and len(song_data) > 1:
+            sh = song_data[0]
+            ti_col = find_col(sh, 'title')
+            for col_name in ['producer', 'artist', 'vocalist', 'songwriter credits']:
+                cc = find_col(sh, col_name)
+                if cc is None:
+                    continue
+                for i, row in enumerate(song_data[1:]):
+                    val = str(row[cc]).strip() if cc < len(row) else ''
+                    if nl in val.lower():
+                        title = str(row[ti_col]).strip() if ti_col is not None and ti_col < len(row) else ''
+                        # Avoid duplicates
+                        if not any(s['row_index'] == i + 2 for s in result['songs']):
+                            result['songs'].append({'title': title, 'role': col_name.title(), 'row_index': i + 2})
+
+        # Personnel where Works With contains name
+        per_data = sheets.get_all_rows('Personnel')
+        if per_data and len(per_data) > 1:
+            ph = per_data[0]
+            ww_col = find_col(ph, 'works with')
+            pn_col = find_col(ph, 'name')
+            if ww_col is not None and pn_col is not None:
+                for i, row in enumerate(per_data[1:]):
+                    ww = str(row[ww_col]).strip() if ww_col < len(row) else ''
+                    if nl in ww.lower():
+                        cname = str(row[pn_col]).strip() if pn_col < len(row) else ''
+                        result['collaborators'].append({'name': cname, 'row_index': i + 2})
+
+        # Invoices where Client equals name
+        try:
+            inv_data = sheets.get_all_rows('Invoices')
+            if inv_data and len(inv_data) > 1:
+                ih = inv_data[0]
+                cl_col = find_col(ih, 'client')
+                no_col = find_col(ih, 'invoice no')
+                am_col = find_col(ih, 'amount')
+                st_col = find_col(ih, 'status')
+                if cl_col is not None:
+                    for row in inv_data[1:]:
+                        client = str(row[cl_col]).strip() if cl_col < len(row) else ''
+                        if nl in client.lower():
+                            inv_no = str(row[no_col]).strip() if no_col is not None and no_col < len(row) else ''
+                            amount = str(row[am_col]).strip() if am_col is not None and am_col < len(row) else ''
+                            status = str(row[st_col]).strip() if st_col is not None and st_col < len(row) else ''
+                            result['invoices'].append({'invoice_no': inv_no, 'amount': amount, 'status': status})
+        except Exception as e:
+            logging.warning(f'Relationship invoices: {e}')
+
+        # Pitch Log where any column contains name
+        try:
+            pitch_data = sheets.get_all_rows('Pitch Log')
+            if pitch_data and len(pitch_data) > 1:
+                pit_h = pitch_data[0]
+                song_col = find_col(pit_h, 'song', 'title')
+                date_col = find_col(pit_h, 'date', 'pitch date')
+                status_col = find_col(pit_h, 'status')
+                for row in pitch_data[1:]:
+                    found = False
+                    for j in range(len(row)):
+                        if nl in str(row[j]).lower():
+                            found = True
+                            break
+                    if found:
+                        song = str(row[song_col]).strip() if song_col is not None and song_col < len(row) else ''
+                        date = str(row[date_col]).strip() if date_col is not None and date_col < len(row) else ''
+                        status = str(row[status_col]).strip() if status_col is not None and status_col < len(row) else ''
+                        result['pitches'].append({'song': song, 'date': date, 'status': status})
+        except Exception as e:
+            logging.warning(f'Relationship pitches: {e}')
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intelligence/pitch-insights')
+@login_required
+def api_pitch_insights():
+    """Pitch analytics: group by genre, month, template. Calculate response/placement rates."""
+    try:
+        pitch_data = sheets.get_all_rows('Pitch Log')
+        if not pitch_data or len(pitch_data) < 2:
+            return jsonify({'total_pitches': 0, 'response_rate': 0, 'placement_rate': 0,
+                           'by_genre': [], 'by_month': [], 'patterns': ['No pitch data yet']})
+
+        pit_h = pitch_data[0]
+        song_col = find_col(pit_h, 'song', 'title')
+        date_col = find_col(pit_h, 'date', 'pitch date')
+        status_col = find_col(pit_h, 'status')
+        template_col = find_col(pit_h, 'template', 'pitch type')
+        genre_col = find_col(pit_h, 'genre')
+
+        # If no genre column in Pitch Log, look up genre from Songs sheet
+        song_genres = {}
+        if genre_col is None:
+            try:
+                song_data = sheets.get_all_rows('Songs')
+                if song_data and len(song_data) > 1:
+                    s_h = song_data[0]
+                    s_ti = find_col(s_h, 'title')
+                    s_gc = find_col(s_h, 'genre')
+                    if s_ti is not None and s_gc is not None:
+                        for srow in song_data[1:]:
+                            t = str(srow[s_ti]).strip().lower() if s_ti < len(srow) else ''
+                            g = str(srow[s_gc]).strip() if s_gc < len(srow) else ''
+                            if t and g:
+                                song_genres[t] = g
+            except Exception:
+                pass
+
+        total = 0
+        responses = 0
+        placements = 0
+        by_genre = {}
+        by_month = {}
+        by_template = {}
+
+        for row in pitch_data[1:]:
+            total += 1
+            status = str(row[status_col]).strip().lower() if status_col is not None and status_col < len(row) else ''
+            is_response = 'response' in status or 'meeting' in status or 'reply' in status
+            is_placement = 'placed' in status or 'cut' in status
+            if is_response or is_placement:
+                responses += 1
+            if is_placement:
+                placements += 1
+
+            # Genre
+            if genre_col is not None and genre_col < len(row):
+                genre_val = str(row[genre_col]).strip()
+            else:
+                song_title = str(row[song_col]).strip().lower() if song_col is not None and song_col < len(row) else ''
+                genre_val = song_genres.get(song_title, 'Unknown')
+            for g in split_tags(genre_val) or ['Unknown']:
+                if g not in by_genre:
+                    by_genre[g] = {'count': 0, 'responses': 0}
+                by_genre[g]['count'] += 1
+                if is_response or is_placement:
+                    by_genre[g]['responses'] += 1
+
+            # Month
+            date_str = str(row[date_col]).strip() if date_col is not None and date_col < len(row) else ''
+            month_key = 'Unknown'
+            if date_str:
+                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M'):
+                    try:
+                        d = datetime.strptime(date_str, fmt)
+                        month_key = d.strftime('%Y-%m')
+                        break
+                    except Exception:
+                        pass
+            if month_key not in by_month:
+                by_month[month_key] = {'count': 0, 'responses': 0}
+            by_month[month_key]['count'] += 1
+            if is_response or is_placement:
+                by_month[month_key]['responses'] += 1
+
+            # Template
+            tmpl = str(row[template_col]).strip() if template_col is not None and template_col < len(row) else 'Unknown'
+            if tmpl not in by_template:
+                by_template[tmpl] = {'count': 0, 'responses': 0}
+            by_template[tmpl]['count'] += 1
+            if is_response or is_placement:
+                by_template[tmpl]['responses'] += 1
+
+        # Build patterns (top 5 insights)
+        patterns = []
+        if by_genre:
+            best_genre = max(by_genre.items(), key=lambda x: x[1]['responses'] / max(x[1]['count'], 1) if x[1]['count'] >= 3 else 0)
+            if best_genre[1]['count'] >= 3:
+                rate = round(best_genre[1]['responses'] / best_genre[1]['count'] * 100)
+                patterns.append(f"{best_genre[0]} has the best response rate at {rate}% ({best_genre[1]['responses']}/{best_genre[1]['count']})")
+        if by_month:
+            sorted_months = sorted(by_month.items(), key=lambda x: x[0])
+            if len(sorted_months) >= 2:
+                last = sorted_months[-1]
+                prev = sorted_months[-2]
+                if last[1]['count'] > prev[1]['count']:
+                    patterns.append(f"Pitch volume increased from {prev[1]['count']} to {last[1]['count']} between {prev[0]} and {last[0]}")
+                elif last[1]['count'] < prev[1]['count']:
+                    patterns.append(f"Pitch volume decreased from {prev[1]['count']} to {last[1]['count']} between {prev[0]} and {last[0]}")
+        if by_template:
+            best_tmpl = max(by_template.items(), key=lambda x: x[1]['responses'] / max(x[1]['count'], 1) if x[1]['count'] >= 2 else 0)
+            if best_tmpl[1]['count'] >= 2 and best_tmpl[1]['responses'] > 0:
+                rate = round(best_tmpl[1]['responses'] / best_tmpl[1]['count'] * 100)
+                patterns.append(f"Template \"{best_tmpl[0]}\" yields {rate}% response rate")
+        if total > 0:
+            patterns.append(f"Total: {total} pitches sent, {responses} responses received ({round(responses/total*100)}%)")
+        if placements > 0:
+            patterns.append(f"{placements} successful placements from {total} pitches ({round(placements/total*100)}% placement rate)")
+        if not patterns:
+            patterns.append('Not enough data for pattern analysis yet')
+
+        return jsonify({
+            'total_pitches': total,
+            'response_rate': round(responses / max(total, 1) * 100, 1),
+            'placement_rate': round(placements / max(total, 1) * 100, 1),
+            'by_genre': sorted([{'genre': g, 'count': v['count'], 'responses': v['responses'],
+                                 'rate': round(v['responses'] / max(v['count'], 1) * 100, 1)} for g, v in by_genre.items()],
+                               key=lambda x: -x['count']),
+            'by_month': sorted([{'month': m, 'count': v['count'], 'responses': v['responses']} for m, v in by_month.items()],
+                               key=lambda x: x['month']),
+            'patterns': patterns[:5]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intelligence/songwriter-productivity')
+@login_required
+def api_songwriter_productivity():
+    """Songwriter productivity: group by credit combinations, calculate stats."""
+    try:
+        song_data = sheets.get_all_rows('Songs')
+        if not song_data or len(song_data) < 2:
+            return jsonify({'pairings': [], 'solo_writers': []})
+
+        sh = song_data[0]
+        ti_col = find_col(sh, 'title')
+        sc_col = find_col(sh, 'songwriter credits')
+        st_col = find_col(sh, 'audio status')
+        rd_col = find_col(sh, 'release date')
+        wd_col = find_col(sh, 'written date')
+
+        pairings = {}  # frozenset of names -> list of song info
+        solo = {}      # single name -> list of song info
+        now = datetime.now()
+
+        for i, row in enumerate(song_data[1:]):
+            title = str(row[ti_col]).strip() if ti_col is not None and ti_col < len(row) else ''
+            credits_val = str(row[sc_col]).strip() if sc_col is not None and sc_col < len(row) else ''
+            status = str(row[st_col]).strip().lower() if st_col is not None and st_col < len(row) else ''
+            if not credits_val or not title:
+                continue
+
+            writers = [w.strip() for w in split_tags(credits_val) if w.strip()]
+            is_released = 'released' in status
+
+            # Calculate days to release
+            days_to_release = None
+            if is_released and rd_col is not None and wd_col is not None:
+                rd_str = str(row[rd_col]).strip() if rd_col < len(row) else ''
+                wd_str = str(row[wd_col]).strip() if wd_col < len(row) else ''
+                if rd_str and wd_str:
+                    rd_dt = wd_dt = None
+                    for fmt in ('%Y-%m-%d', '%m/%d/%Y'):
+                        try: rd_dt = datetime.strptime(rd_str, fmt); break
+                        except Exception: pass
+                    for fmt in ('%Y-%m-%d', '%m/%d/%Y'):
+                        try: wd_dt = datetime.strptime(wd_str, fmt); break
+                        except Exception: pass
+                    if rd_dt and wd_dt:
+                        days_to_release = (rd_dt - wd_dt).days
+
+            song_info = {'title': title, 'released': is_released, 'days_to_release': days_to_release}
+
+            if len(writers) == 1:
+                name = writers[0]
+                if name not in solo:
+                    solo[name] = []
+                solo[name].append(song_info)
+            else:
+                # Store as sorted pair key for consistent grouping
+                key = tuple(sorted(writers, key=str.lower))
+                if key not in pairings:
+                    pairings[key] = []
+                pairings[key].append(song_info)
+
+        # Build pairing results
+        pairing_results = []
+        for writers, songs in sorted(pairings.items(), key=lambda x: -len(x[1])):
+            released = [s for s in songs if s['released']]
+            days_list = [s['days_to_release'] for s in songs if s['days_to_release'] is not None and s['days_to_release'] > 0]
+            avg_days = round(sum(days_list) / len(days_list)) if days_list else None
+            pairing_results.append({
+                'writers': ' | '.join(writers),
+                'song_count': len(songs),
+                'released_count': len(released),
+                'avg_days_to_release': avg_days,
+                'songs': [s['title'] for s in songs]
+            })
+
+        solo_results = []
+        for name, songs in sorted(solo.items(), key=lambda x: -len(x[1])):
+            released = [s for s in songs if s['released']]
+            solo_results.append({
+                'name': name,
+                'song_count': len(songs),
+                'released_count': len(released)
+            })
+
+        return jsonify({'pairings': pairing_results[:20], 'solo_writers': solo_results[:20]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intelligence/city/<city_name>')
+@login_required
+def api_city_intelligence(city_name):
+    """City intelligence: find all contacts in a city with connection strength."""
+    try:
+        per_data = sheets.get_all_rows('Personnel')
+        if not per_data or len(per_data) < 2:
+            return jsonify({'city': city_name, 'contacts': [], 'total': 0})
+
+        ph = per_data[0]
+        pn_col = find_col(ph, 'name')
+        pc_col = find_col(ph, 'city')
+        pf_col = find_col(ph, 'field')
+        po_col = find_col(ph, 'last outreach', 'last contact')
+        pe_col = find_col(ph, 'email')
+        pt_col = find_col(ph, 'tag', 'tags')
+
+        city_lower = city_name.lower().strip()
+        now = datetime.now()
+
+        # Build song counts per person
+        song_counts = {}
+        try:
+            song_data = sheets.get_all_rows('Songs')
+            if song_data and len(song_data) > 1:
+                s_h = song_data[0]
+                for col_name in ['producer', 'artist', 'vocalist', 'songwriter credits']:
+                    cc = find_col(s_h, col_name)
+                    if cc is None:
+                        continue
+                    for srow in song_data[1:]:
+                        val = str(srow[cc]).strip() if cc < len(srow) else ''
+                        for p in split_tags(val):
+                            song_counts[p.lower()] = song_counts.get(p.lower(), 0) + 1
+        except Exception:
+            pass
+
+        # Build pitch counts per person
+        pitch_counts = {}
+        try:
+            pitch_data = sheets.get_all_rows('Pitch Log')
+            if pitch_data and len(pitch_data) > 1:
+                for prow in pitch_data[1:]:
+                    for j in range(len(prow)):
+                        for p in split_tags(str(prow[j])):
+                            pitch_counts[p.lower()] = pitch_counts.get(p.lower(), 0) + 1
+        except Exception:
+            pass
+
+        contacts = []
+        for i, row in enumerate(per_data[1:]):
+            city_val = str(row[pc_col]).strip() if pc_col is not None and pc_col < len(row) else ''
+            if city_lower not in city_val.lower():
+                continue
+
+            pname = str(row[pn_col]).strip() if pn_col is not None and pn_col < len(row) else ''
+            if not pname:
+                continue
+
+            field = str(row[pf_col]).strip() if pf_col is not None and pf_col < len(row) else ''
+            outreach_str = str(row[po_col]).strip() if po_col is not None and po_col < len(row) else ''
+            email = str(row[pe_col]).strip() if pe_col is not None and pe_col < len(row) else ''
+            tags = str(row[pt_col]).strip() if pt_col is not None and pt_col < len(row) else ''
+
+            days_since = None
+            if outreach_str:
+                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M'):
+                    try:
+                        od = datetime.strptime(outreach_str, fmt)
+                        days_since = (now - od).days
+                        break
+                    except Exception:
+                        pass
+
+            sc = song_counts.get(pname.lower(), 0)
+            pc = pitch_counts.get(pname.lower(), 0)
+
+            contacts.append({
+                'name': pname, 'field': field,
+                'last_outreach': outreach_str,
+                'days_since': days_since if days_since is not None else -1,
+                'has_email': bool(email),
+                'tags': tags,
+                'connection_strength': sc + pc,
+                'row_index': i + 2
+            })
+
+        contacts.sort(key=lambda x: -x['connection_strength'])
+        return jsonify({'city': city_name, 'contacts': contacts, 'total': len(contacts)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intelligence/smart-defaults')
+@login_required
+def api_smart_defaults():
+    """Smart defaults: analyze a producer's genre distribution, common co-writers, vocalists."""
+    producer = request.args.get('producer', '').strip()
+    if not producer:
+        return jsonify({'error': 'producer parameter required'}), 400
+    try:
+        song_data = sheets.get_all_rows('Songs')
+        if not song_data or len(song_data) < 2:
+            return jsonify({'producer': producer, 'song_count': 0, 'top_genres': [], 'common_cowriters': [], 'common_vocalists': []})
+
+        sh = song_data[0]
+        pc = find_col(sh, 'producer')
+        gc = find_col(sh, 'genre')
+        sc = find_col(sh, 'songwriter credits')
+        vc = find_col(sh, 'vocalist')
+        nl = producer.lower()
+
+        genres = {}
+        cowriters = {}
+        vocalists = {}
+        song_count = 0
+
+        for row in song_data[1:]:
+            prod = str(row[pc]).strip().lower() if pc is not None and pc < len(row) else ''
+            if nl not in prod:
+                continue
+            song_count += 1
+
+            if gc is not None and gc < len(row):
+                for g in split_tags(row[gc]):
+                    genres[g] = genres.get(g, 0) + 1
+
+            if sc is not None and sc < len(row):
+                for w in split_tags(row[sc]):
+                    wl = w.strip()
+                    if wl.lower() != nl:
+                        cowriters[wl] = cowriters.get(wl, 0) + 1
+
+            if vc is not None and vc < len(row):
+                for v in split_tags(row[vc]):
+                    vl = v.strip()
+                    if vl.lower() != nl:
+                        vocalists[vl] = vocalists.get(vl, 0) + 1
+
+        top_genres = sorted(genres.items(), key=lambda x: -x[1])[:5]
+        total_genre_count = sum(v for _, v in top_genres)
+        return jsonify({
+            'producer': producer,
+            'song_count': song_count,
+            'top_genres': [{'genre': g, 'count': c, 'pct': round(c / max(total_genre_count, 1) * 100)} for g, c in top_genres],
+            'common_cowriters': [{'name': w, 'count': c} for w, c in sorted(cowriters.items(), key=lambda x: -x[1])[:5]],
+            'common_vocalists': [{'name': v, 'count': c} for v, c in sorted(vocalists.items(), key=lambda x: -x[1])[:5]]
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

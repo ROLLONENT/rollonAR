@@ -502,6 +502,7 @@ function renderDetailModal(record,headers,table){
   if(hasDirTabs){
     html+='<div class="modal-tabs">';
     html+='<div class="modal-tab active" onclick="switchTab(this,\'tab-details\')">Details</div>';
+    html+='<div class="modal-tab" onclick="switchTab(this,\'tab-connections\');loadConnections(\''+escA(name)+'\')">Connections</div>';
     html+='<div class="modal-tab" onclick="switchTab(this,\'tab-timeline\')">Timeline</div>';
     html+='<div class="modal-tab" onclick="switchTab(this,\'tab-history\');loadHistory('+ri+',\'directory\')">History</div>';
     html+='</div>';
@@ -544,6 +545,10 @@ function renderDetailModal(record,headers,table){
     const v=record[lyricsH]||'';
     html+=`<div id="tab-lyrics" class="modal-tab-content"><div class="detail-value editable" data-field="${escA(lyricsH)}" data-row="${ri}" data-table="${table}" data-type="long" data-current="${escData(v)}" onclick="startEdit(this)" style="min-height:200px;white-space:pre-wrap;font-size:13px;line-height:1.7">${v?esc(v):'<span class="pill pill-empty">Click to add</span>'}</div></div>`;
   }
+  // Connections tab (directory only, loaded on demand)
+  if(hasDirTabs){
+    html+=`<div id="tab-connections" class="modal-tab-content"><div style="padding:12px;color:var(--text-muted)">Loading connections...</div></div>`;
+  }
   // History tab (loaded on demand)
   html+=`<div id="tab-history" class="modal-tab-content"><div style="padding:12px;color:var(--text-muted)">Loading history...</div></div>`;
   openModal(name,html);
@@ -569,6 +574,34 @@ function loadHistory(ri,table){
     html+='</div>';
     el.innerHTML=html;
   }).catch(()=>{el.innerHTML='<div style="padding:12px;color:var(--danger)">Failed to load history.</div>'});
+}
+
+function loadConnections(name){
+  const el=document.getElementById('tab-connections');if(!el)return;
+  fetch('/api/intelligence/relationships/'+encodeURIComponent(name)).then(r=>r.json()).then(d=>{
+    let html='<div style="padding:8px 0">';
+    // Songs
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text-ghost);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Songs ('+d.songs.length+')</div>';
+    if(d.songs.length){html+='<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.songs.map(s=>'<span class="pill pill-tag" style="cursor:pointer" onclick="openRecord('+s.row_index+',\'songs\')" title="'+esc(s.role)+'">'+esc(s.title)+' <span style="color:var(--text-ghost);font-size:9px">'+esc(s.role)+'</span></span>').join('')+'</div>'}
+    else{html+='<span style="font-size:12px;color:var(--text-ghost)">No songs found</span>'}
+    html+='</div>';
+    // Collaborators
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text-ghost);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Collaborators ('+d.collaborators.length+')</div>';
+    if(d.collaborators.length){html+='<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.collaborators.map(c=>'<span class="pill pill-link" style="cursor:pointer" onclick="openRecord('+c.row_index+',\'directory\')">'+esc(c.name)+'</span>').join('')+'</div>'}
+    else{html+='<span style="font-size:12px;color:var(--text-ghost)">No collaborators found</span>'}
+    html+='</div>';
+    // Invoices
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text-ghost);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Invoices ('+d.invoices.length+')</div>';
+    if(d.invoices.length){html+='<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.invoices.map(inv=>'<span class="pill" style="background:var(--bg-raised);border:1px solid var(--border)">'+esc(inv.invoice_no)+' $'+esc(inv.amount)+' <span style="color:'+(inv.status.toLowerCase()==='paid'?'var(--success)':'var(--danger)')+'">'+esc(inv.status)+'</span></span>').join('')+'</div>'}
+    else{html+='<span style="font-size:12px;color:var(--text-ghost)">No invoices found</span>'}
+    html+='</div>';
+    // Pitches
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text-ghost);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Pitches ('+d.pitches.length+')</div>';
+    if(d.pitches.length){html+='<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.pitches.map(p=>'<span class="pill" style="background:var(--bg-raised);border:1px solid var(--border)">'+esc(p.song||'?')+' <span style="color:var(--text-ghost);font-size:10px">'+esc(p.date)+'</span> '+esc(p.status)+'</span>').join('')+'</div>'}
+    else{html+='<span style="font-size:12px;color:var(--text-ghost)">No pitches found</span>'}
+    html+='</div></div>';
+    el.innerHTML=html;
+  }).catch(()=>{el.innerHTML='<div style="padding:12px;color:var(--danger)">Failed to load connections.</div>'});
 }
 
 function renderDetailValue(val,type){
