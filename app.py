@@ -14,6 +14,8 @@ from modules.pitch_builder import PitchBuilder
 from modules.pub_splits import PubSplitCalculator
 from modules.id_resolver import IDResolver, cleanH as _module_cleanH
 from modules.lyric_doc import auto_generate_and_link as generate_lyric_doc
+from modules.scout_engine import (ScoutDiscovery, get_roster_artists, get_artist_profile,
+    get_artist_songs, find_warm_connections as scout_warm_connections)
 
 logging.basicConfig(filename='rollon.log', level=logging.WARNING,
     format='%(asctime)s %(levelname)s %(message)s')
@@ -3973,6 +3975,136 @@ def api_scout_count():
     except Exception as e:
         logging.warning(f'Scout leads count: {e}')
         return jsonify({'count': 0})
+
+
+# ==================== SCOUT DISCOVERY ENGINE ====================
+_scout_discovery = None
+_scout_cache = {}  # {artist_name: {timestamp, data}}
+_scout_cache_lock = threading.Lock()
+
+def _get_scout_discovery():
+    global _scout_discovery
+    if _scout_discovery is None:
+        _scout_discovery = ScoutDiscovery(sheets, find_col, cleanH)
+    return _scout_discovery
+
+
+@app.route('/api/scout/roster')
+@admin_required
+def api_scout_roster():
+    """Get all roster artists available for scouting."""
+    artists = get_roster_artists(sheets, find_col)
+    return jsonify({'artists': artists})
+
+
+@app.route('/api/scout/discover')
+@admin_required
+def api_scout_discover():
+    """Run discovery for a roster artist. Returns cached if fresh (<6h)."""
+    artist_name = request.args.get('artist', '').strip()
+    force = request.args.get('force', '').lower() == 'true'
+    if not artist_name:
+        return jsonify({'error': 'Artist name required'}), 400
+
+    # Check cache
+    with _scout_cache_lock:
+        cached = _scout_cache.get(artist_name.lower())
+    if cached and not force:
+        age = time.time() - cached.get('timestamp_epoch', 0)
+        if age < 21600:  # 6 hours
+            return jsonify(cached['data'])
+
+    # Run discovery
+    discovery = _get_scout_discovery()
+    filters = {}
+    if request.args.get('genre'):
+        filters['genre'] = request.args.get('genre')
+    if request.args.get('min_listeners'):
+        filters['min_listeners'] = request.args.get('min_listeners')
+    if request.args.get('max_listeners'):
+        filters['max_listeners'] = request.args.get('max_listeners')
+    if request.args.get('location'):
+        filters['location'] = request.args.get('location')
+
+    try:
+        data = discovery.run_full_discovery(artist_name, filters)
+        # Cache result
+        with _scout_cache_lock:
+            _scout_cache[artist_name.lower()] = {
+                'timestamp_epoch': time.time(),
+                'data': data
+            }
+        return jsonify(data)
+    except Exception as e:
+        logging.warning(f"Scout discovery error for {artist_name}: {e}")
+        return jsonify({'error': str(e), 'collaborators': [], 'tours': [], 'sync_briefs': []}), 500
+
+
+@app.route('/api/scout/warm-connections')
+@admin_required
+def api_scout_warm():
+    """Find warm connections for an entity name."""
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'connections': []})
+    conns = scout_warm_connections(name, sheets, find_col, cleanH)
+    return jsonify({'connections': conns, 'count': len(conns)})
+
+
+@app.route('/api/scout/profile')
+@admin_required
+def api_scout_profile():
+    """Get full profile for a roster artist."""
+    name = request.args.get('artist', '').strip()
+    if not name:
+        return jsonify({'error': 'Artist name required'}), 400
+    profile = get_artist_profile(sheets, find_col, name)
+    songs = get_artist_songs(sheets, find_col, name)
+    return jsonify({'profile': profile, 'songs': songs, 'song_count': len(songs)})
+
+
+@app.route('/api/settings/api-keys', methods=['POST'])
+@admin_required
+def api_save_api_keys():
+    """Save API keys to .env file."""
+    d = request.json or {}
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    try:
+        # Read existing .env
+        existing = {}
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        k, v = line.split('=', 1)
+                        existing[k.strip()] = v.strip()
+        # Update with new keys (only non-empty values)
+        for key in ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET', 'SONGKICK_API_KEY', 'LASTFM_API_KEY']:
+            val = d.get(key, '').strip()
+            if val:
+                existing[key] = val
+                os.environ[key] = val
+        # Write back
+        with open(env_path, 'w') as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scout/sources')
+@admin_required
+def api_scout_sources():
+    """Check which API sources are configured."""
+    import os
+    return jsonify({
+        'spotify': bool(os.environ.get('SPOTIFY_CLIENT_ID') and os.environ.get('SPOTIFY_CLIENT_SECRET')),
+        'songkick': bool(os.environ.get('SONGKICK_API_KEY')),
+        'lastfm': bool(os.environ.get('LASTFM_API_KEY')),
+        'bandsintown': True
+    })
 
 
 @app.errorhandler(404)

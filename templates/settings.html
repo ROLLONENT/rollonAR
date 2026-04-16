@@ -30,6 +30,19 @@
     <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Open browser console (Cmd+Option+J) and type <kbd style="background:var(--bg-surface);padding:2px 6px;border-radius:3px;border:1px solid var(--border)">ROLLON.perf()</kbd> for latency report or <kbd style="background:var(--bg-surface);padding:2px 6px;border-radius:3px;border:1px solid var(--border)">ROLLON.health()</kbd> for endpoint status.</p>
   </div>
   <div class="settings-section">
+    <h3>Scout API Keys</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Configure API keys for Scout Engine auto-discovery. Stored in .env file, never in source code.</p>
+    <div id="api-key-status" style="margin-bottom:8px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:600px">
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Spotify Client ID</label><input id="ak-spotify-id" class="prompt-input" placeholder="From developer.spotify.com"></div>
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Spotify Client Secret</label><input id="ak-spotify-secret" class="prompt-input" type="password" placeholder="Secret key"></div>
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Songkick API Key</label><input id="ak-songkick" class="prompt-input" placeholder="From songkick.com/developer"></div>
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Last.fm API Key</label><input id="ak-lastfm" class="prompt-input" placeholder="From last.fm/api/account/create"></div>
+    </div>
+    <button class="btn btn-accent" onclick="saveApiKeys()" style="margin-top:8px">Save API Keys</button>
+    <p style="font-size:10px;color:var(--text-ghost);margin-top:4px">Keys are saved to .env file on the server. Restart app after saving.</p>
+  </div>
+  <div class="settings-section">
     <h3>Clear Saved Views</h3>
     <button class="btn btn-danger" onclick="clearViews()">Clear All Views</button>
   </div>
@@ -58,6 +71,28 @@ function calcTz(){fetch('/api/automate/timezone-calc',{method:'POST',headers:{'C
 
 function clearViews(){localStorage.removeItem('rollon_song_views');localStorage.removeItem('rollon_dir_views');
   localStorage.removeItem('rollon_song_current_view');localStorage.removeItem('rollon_dir_current_view');toast('Views cleared')}
+
+function saveApiKeys(){
+  const keys={
+    SPOTIFY_CLIENT_ID:document.getElementById('ak-spotify-id').value.trim(),
+    SPOTIFY_CLIENT_SECRET:document.getElementById('ak-spotify-secret').value.trim(),
+    SONGKICK_API_KEY:document.getElementById('ak-songkick').value.trim(),
+    LASTFM_API_KEY:document.getElementById('ak-lastfm').value.trim()
+  };
+  fetch('/api/settings/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(keys)})
+    .then(r=>r.json()).then(d=>{if(d.success){toast('API keys saved to .env. Restart app to apply.')}else toast(d.error||'Failed','error')});
+}
+// Check scout source status on load
+fetch('/api/scout/sources').then(r=>r.json()).then(d=>{
+  const el=document.getElementById('api-key-status');
+  if(!el)return;
+  const items=[];
+  items.push(d.spotify?'<span style="color:var(--success)">Spotify: configured</span>':'<span style="color:var(--text-ghost)">Spotify: not configured</span>');
+  items.push(d.songkick?'<span style="color:var(--success)">Songkick: configured</span>':'<span style="color:var(--text-ghost)">Songkick: not configured</span>');
+  items.push(d.lastfm?'<span style="color:var(--success)">Last.fm: configured</span>':'<span style="color:var(--text-ghost)">Last.fm: not configured</span>');
+  items.push('<span style="color:var(--success)">Bandsintown: always available</span>');
+  el.innerHTML=items.join(' &middot; ');
+}).catch(()=>{})
 
 function checkDuplicates(){
   const el=document.getElementById('dupe-results');
