@@ -2016,11 +2016,16 @@ function bulkAction(action,table){
       {label:'Value (OVERWRITES existing)',placeholder:'e.g. Pop'}
     ],(v)=>{if(!v[0])return;doBulk(table,rows,'set_field',v[0],v[1]||'')});
   } else if(action==='delete'){
-    showPromptModal('Delete '+rows.length+' rows?',[{label:'Type DELETE to confirm',placeholder:''}],(v)=>{
-      if(v[0]!=='DELETE'){toast('Cancelled','error');return}
+    showPromptModal('Archive '+rows.length+' records?',[
+      {label:'These records will be moved to Archive and can be restored from Settings.',placeholder:''},
+      {label:'Type ARCHIVE to confirm (or DELETE for permanent removal)',placeholder:''}
+    ],(v)=>{
+      const confirm=v[1]||'';
+      if(confirm!=='ARCHIVE'&&confirm!=='DELETE'){toast('Type ARCHIVE or DELETE to confirm','error');return}
+      const hardDelete=confirm==='DELETE';
       fetch('/api/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({table,row_indices:rows})
-      }).then(r=>r.json()).then(d=>{if(d.success){toast(d.deleted+' rows deleted');window._selectedRows.clear();updateBulkBar();reload()}else toast(d.error,'error')});
+        body:JSON.stringify({table,row_indices:rows,hard_delete:hardDelete})
+      }).then(r=>r.json()).then(d=>{if(d.success){toast(d.deleted+' records '+(d.method==='archived'?'archived (recoverable)':'permanently deleted'));window._selectedRows.clear();updateBulkBar();reload()}else toast(d.error,'error')});
     });
   }
 }
@@ -2620,7 +2625,7 @@ function runDupeScan(){
         const email=r.Email||'';
         html+=esc(name);if(email)html+=' ('+esc(email)+')';
         html+='</span>';
-        if(i>0)html+='<button class="btn btn-sm" style="color:var(--danger);font-size:10px" onclick="deleteDupeRow('+ri+',\''+table+'\')">Delete</button>';
+        if(i>0)html+='<button class="btn btn-sm" style="color:var(--danger);font-size:10px" onclick="deleteDupeRow('+ri+',\''+table+'\')">Archive</button>';
         html+='</div>';
       });
       html+='</div></div>';
@@ -2630,11 +2635,11 @@ function runDupeScan(){
 }
 
 function deleteDupeRow(ri,table){
-  if(!confirm('Delete row '+ri+'? This cannot be undone.'))return;
-  fetch('/api/merge',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({table,keep_row:ri,delete_rows:[ri],merged_values:{}})
+  if(!confirm('Archive row '+ri+'? It will be recoverable from Settings > Archive.'))return;
+  fetch('/api/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table,row_indices:[ri]})
   }).then(r=>r.json()).then(d=>{
-    if(d.success){toast('Row '+ri+' deleted');runDupeScan()}
+    if(d.success){toast('Row '+ri+' archived (recoverable)');runDupeScan()}
     else toast(d.error||'Failed','error');
   });
 }
