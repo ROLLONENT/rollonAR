@@ -1,4 +1,5 @@
 """Pitch Campaign Builder — mirrors Airtable filter logic."""
+import logging
 import re
 from datetime import datetime, timedelta
 
@@ -75,8 +76,8 @@ class PitchBuilder:
         try:
             data = self.sheets.get_all_rows('Pitch Log')
             if data: return True
-        except:
-            pass
+        except Exception as e:
+            logging.warning(f'Pitch Log sheet check: {e}')
         try:
             self.sheets.service.spreadsheets().batchUpdate(
                 spreadsheetId=self.sheets.spreadsheet_id,
@@ -164,7 +165,8 @@ class PitchBuilder:
                 rec['_row'] = i + 2
                 results.append(rec)
             return results[-limit:]
-        except:
+        except Exception as e:
+            logging.warning(f'Pitch history fetch: {e}')
             return []
 
     def check_duplicates(self, contact_email, song_title=''):

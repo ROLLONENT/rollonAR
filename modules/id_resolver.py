@@ -7,6 +7,12 @@ import re
 
 STRICT_ID_PATTERN = re.compile(r'^rec[A-Za-z0-9]{10,}$')
 
+_CLEAN_H_RE = re.compile(r'\[✓\]\s*|\[✗\]\s*|\[\?\?\]\s*|\[∅\]\s*|\[\s*✓\]\s*')
+
+def cleanH(h):
+    """Clean Airtable-style header markers. Shared across modules."""
+    return _CLEAN_H_RE.sub('', h or '').strip()
+
 
 class IDResolver:
     def __init__(self, sheets_manager):
@@ -126,7 +132,7 @@ class IDResolver:
                 label = obj.get('label', 'Link')
                 url = obj.get('url', '')
                 if url: return url
-            except: pass
+            except Exception as e: pass
             return value
         if value.startswith('[') or value.startswith('{'):
             return value
