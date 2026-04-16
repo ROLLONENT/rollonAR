@@ -200,20 +200,124 @@ function addArtistLead(){
   });
 }
 
+// ---- Tour Opportunity Modal with typeahead for headliner + agent ----
+let _tourHeadliner=null, _tourAgent=null;
+
 function addTourLead(){
-  showPromptModal('Add Tour Opportunity',[
-    {label:'Headliner (required)',placeholder:'Artist or band name'},
-    {label:'Dates',placeholder:'e.g. Sep 15-20, 2026'},
-    {label:'Cities',placeholder:'London, Manchester, Dublin'},
-    {label:'Venues',placeholder:'O2 Forum, Roundhouse'},
-    {label:'Capacity',placeholder:'e.g. 2000'},
-    {label:'Agent/Manager Contact',placeholder:'Name if known'},
-    {label:'Notes',placeholder:'Support slot available? Genre fit?'},
-  ],(v)=>{
-    if(!v[0])return;
+  _tourHeadliner=null;_tourAgent=null;
+  const ov=document.createElement('div');ov.className='prompt-overlay';ov.id='tour-modal';
+  ov.innerHTML=`<div class="prompt-box" style="max-width:480px">
+    <h3 style="color:var(--accent);margin-bottom:12px">Add Tour Opportunity</h3>
+    <label>Headliner <span style="color:var(--danger)">*</span> <span style="font-size:10px;color:var(--text-ghost)">(searches Personnel)</span></label>
+    <div style="position:relative">
+      <input id="tour-headliner" class="prompt-input" placeholder="Type artist name..." oninput="_tourSearchPerson(this,'headliner')">
+      <div id="tour-headliner-dd" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:60"></div>
+    </div>
+    <div id="tour-headliner-status" style="font-size:10px;margin-bottom:4px;min-height:14px"></div>
+    <label>Agent/Manager <span style="font-size:10px;color:var(--text-ghost)">(searches Personnel)</span></label>
+    <div style="position:relative">
+      <input id="tour-agent" class="prompt-input" placeholder="Type agent/manager name..." oninput="_tourSearchPerson(this,'agent')">
+      <div id="tour-agent-dd" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:60"></div>
+    </div>
+    <div id="tour-agent-status" style="font-size:10px;margin-bottom:4px;min-height:14px"></div>
+    <label>Dates</label><input id="tour-dates" class="prompt-input" placeholder="e.g. Sep 15-20, 2026">
+    <label>Cities</label><input id="tour-cities" class="prompt-input" placeholder="London, Manchester, Dublin">
+    <label>Venues</label><input id="tour-venues" class="prompt-input" placeholder="O2 Forum, Roundhouse">
+    <label>Capacity</label><input id="tour-capacity" class="prompt-input" placeholder="e.g. 2000">
+    <label>Notes</label><input id="tour-notes" class="prompt-input" placeholder="Support slot available? Genre fit?">
+    <div class="prompt-actions" style="margin-top:12px">
+      <button class="btn" onclick="document.getElementById('tour-modal')?.remove()">Cancel</button>
+      <button class="btn btn-accent" onclick="_tourSubmit()">Add Opportunity</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove()});
+  document.body.appendChild(ov);
+  document.getElementById('tour-headliner').focus();
+}
+
+let _tourDeb={};
+function _tourSearchPerson(inp,role){
+  const q=inp.value.trim();
+  const dd=document.getElementById('tour-'+role+'-dd');
+  const st=document.getElementById('tour-'+role+'-status');
+  if(role==='headliner')_tourHeadliner=null;else _tourAgent=null;
+  if(st)st.textContent='';
+  clearTimeout(_tourDeb[role]);
+  if(!q||q.length<1){dd.style.display='none';return}
+  _tourDeb[role]=setTimeout(()=>{
+    fetch('/api/search-record?q='+encodeURIComponent(q)+'&table=Personnel').then(r=>r.json()).then(d=>{
+      const results=d.results||[];
+      let html=results.slice(0,10).map(r=>
+        `<div class="typeahead-item" onclick="_tourPickPerson('${role}','${escA(r.name)}',${r.row_index})">${esc(r.name)} <span style="font-size:9px;color:var(--text-ghost)">${esc(r.table)}</span></div>`
+      ).join('');
+      // Always offer "create new" option
+      html+=`<div class="typeahead-item create" onclick="_tourCreatePerson('${role}','${escA(q)}')">+ Create "${esc(q)}" as new contact</div>`;
+      dd.innerHTML=html;dd.style.display='block';
+    });
+  },200);
+}
+
+function _tourPickPerson(role,name,ri){
+  const inp=document.getElementById('tour-'+role);
+  const dd=document.getElementById('tour-'+role+'-dd');
+  const st=document.getElementById('tour-'+role+'-status');
+  inp.value=name;dd.style.display='none';
+  if(role==='headliner'){_tourHeadliner={name,row_index:ri,existing:true}}
+  else{_tourAgent={name,row_index:ri,existing:true}}
+  if(st)st.innerHTML='<span style="color:var(--success)">Linked to existing contact: '+esc(name)+'</span>';
+}
+
+function _tourCreatePerson(role,name){
+  const inp=document.getElementById('tour-'+role);
+  const dd=document.getElementById('tour-'+role+'-dd');
+  const st=document.getElementById('tour-'+role+'-status');
+  inp.value=name;dd.style.display='none';
+  const tags=role==='headliner'?'Scout Target | Tour Headliner':'Scout Target | Tour Agent';
+  if(role==='headliner'){_tourHeadliner={name,existing:false,tags}}
+  else{_tourAgent={name,existing:false,tags}}
+  if(st)st.innerHTML='<span style="color:var(--accent)">Will create new contact: '+esc(name)+' ('+tags+')</span>';
+}
+
+function _tourSubmit(){
+  const headlinerName=document.getElementById('tour-headliner').value.trim();
+  if(!headlinerName){toast('Headliner is required','error');return}
+  // If user typed but didn't pick, check for near-match
+  if(!_tourHeadliner){
+    _tourHeadliner={name:headlinerName,existing:false,tags:'Scout Target | Tour Headliner'};
+  }
+  const agentName=document.getElementById('tour-agent').value.trim();
+  if(agentName&&!_tourAgent){
+    _tourAgent={name:agentName,existing:false,tags:'Scout Target | Tour Agent'};
+  }
+  // Create new Personnel records for non-existing contacts
+  const creates=[];
+  if(_tourHeadliner&&!_tourHeadliner.existing)creates.push({name:_tourHeadliner.name,tags:_tourHeadliner.tags,field:'Artist'});
+  if(_tourAgent&&!_tourAgent.existing)creates.push({name:_tourAgent.name,tags:_tourAgent.tags,field:'Agent'});
+  const doCreate=()=>{
+    if(!creates.length)return Promise.resolve();
+    return Promise.all(creates.map(c=>
+      fetch('/api/directory/new',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({Name:c.name,Tags:c.tags,Field:c.field})}).then(r=>r.json())
+    ));
+  };
+  doCreate().then(()=>{
     fetch('/api/scout/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      type:'tour',name:v[0],headliner:v[0],dates:v[1],cities:v[2],venue:v[3],capacity:v[4],agent_contact:v[5],notes:v[6]
-    })}).then(r=>r.json()).then(d=>{if(d.success){toast('Tour opportunity added');loadScout()}else toast(d.error,'error')});
+      type:'tour',name:headlinerName,headliner:headlinerName,
+      dates:document.getElementById('tour-dates').value.trim(),
+      cities:document.getElementById('tour-cities').value.trim(),
+      venue:document.getElementById('tour-venues').value.trim(),
+      capacity:document.getElementById('tour-capacity').value.trim(),
+      agent_contact:agentName,
+      notes:document.getElementById('tour-notes').value.trim(),
+      headliner_linked:_tourHeadliner?.existing?'yes':'new',
+      agent_linked:_tourAgent?.existing?'yes':(_tourAgent?'new':'')
+    })}).then(r=>r.json()).then(d=>{
+      if(d.success){
+        toast('Tour opportunity added'+(creates.length?' + '+creates.length+' new contacts created':''));
+        document.getElementById('tour-modal')?.remove();
+        loadScout();
+      } else toast(d.error||'Failed','error');
+    });
   });
 }
 

@@ -13,6 +13,10 @@ function sortFieldsForGrid(fields){
   if(!fields||!fields.length)return {field:'',dir:'asc'};
   return {field:fields[0].col||'',dir:fields[0].dir||'asc'};
 }
+function sortFieldsSummary(fields){
+  if(!fields||!fields.length)return '';
+  return fields.filter(s=>s.col).map(s=>s.col+(s.dir==='desc'?' ↓':' ↑')).join(', ');
+}
 
 // ---- SESSION MEMORY (restore last page state) ----
 function saveSessionState(page,data){try{sessionStorage.setItem('rollon_session_'+page,JSON.stringify(data))}catch(e){}}
@@ -185,6 +189,44 @@ function filterPfDD(idx){const dd=document.getElementById('pfdd-'+idx);if(!dd)re
   if(vis.length)vis[0].classList.add('ta-highlight');
 }
 function pickPfOption(idx,val){document.getElementById('pf'+idx).value=val;document.getElementById('pfdd-'+idx).style.display='none'}
+
+// ---- TYPEAHEAD FOR PROMPT MODAL FIELDS (wires Personnel/company search onto prompt inputs) ----
+function wirePromptTypeahead(fieldIdx,table,multiValue){
+  const inp=document.getElementById('pf'+fieldIdx);if(!inp)return;
+  // Create dropdown container
+  let dd=document.getElementById('pfta-'+fieldIdx);
+  if(!dd){dd=document.createElement('div');dd.id='pfta-'+fieldIdx;dd.className='typeahead-dropdown';
+    dd.style.cssText='display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:60';
+    inp.parentElement.style.position='relative';inp.parentElement.appendChild(dd)}
+  let deb;
+  inp.addEventListener('input',()=>{clearTimeout(deb);deb=setTimeout(()=>{
+    // For multi-value (pipe-separated), search the last segment
+    let q=inp.value.trim();
+    if(multiValue){const parts=q.split('|');q=parts[parts.length-1].trim()}
+    if(q.length<1){dd.style.display='none';return}
+    fetch('/api/search-record?q='+encodeURIComponent(q)+'&table='+encodeURIComponent(table)).then(r=>r.json()).then(d=>{
+      let html=(d.results||[]).slice(0,10).map(r=>
+        `<div class="typeahead-item" data-name="${escA(r.name)}" onclick="pickPromptTA(${fieldIdx},'${escA(r.name)}',${multiValue})">${esc(r.name)} <span style="font-size:9px;color:var(--text-ghost)">${esc(r.table)}</span></div>`
+      ).join('');
+      if(!html)html='<div style="padding:8px;color:var(--text-ghost);font-size:11px">No matches</div>';
+      dd.innerHTML=html;dd.style.display='block';
+    });
+  },200)});
+  inp.addEventListener('blur',()=>{setTimeout(()=>{dd.style.display='none'},200)});
+}
+
+function pickPromptTA(fieldIdx,name,multiValue){
+  const inp=document.getElementById('pf'+fieldIdx);if(!inp)return;
+  if(multiValue){
+    const parts=inp.value.split('|').map(p=>p.trim()).filter(Boolean);
+    parts[parts.length-1]=name;
+    inp.value=parts.join(' | ')+' | ';
+  } else {
+    inp.value=name;
+  }
+  const dd=document.getElementById('pfta-'+fieldIdx);if(dd)dd.style.display='none';
+  inp.focus();
+}
 
 // Keyboard navigation for all searchable dropdowns
 document.addEventListener('keydown',e=>{

@@ -299,8 +299,8 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
       showPromptModal('New Song',[
         // Core
         {label:'Title (required)',placeholder:'Song title'},
-        {label:'Artist',placeholder:'Performing artist'},
-        {label:'Producer',placeholder:'Producer name(s)'},
+        {label:'Artist (typeahead)',placeholder:'Search Personnel...'},
+        {label:'Producer (typeahead)',placeholder:'Search Personnel...'},
         {label:'Audio Status',type:'select',options:statuses},
         // Metadata
         {label:'Genre',placeholder:'e.g. Pop, Dance',type:'tags',options:genres},
@@ -309,8 +309,8 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
         {label:'Key',placeholder:'e.g. C minor'},
         {label:'Mood',placeholder:'e.g. Upbeat, Melancholic'},
         // Credits
-        {label:'Songwriter Credits',placeholder:'Writer 1 | Writer 2'},
-        {label:'Vocalist',placeholder:'Vocalist name'},
+        {label:'Songwriter Credits (typeahead)',placeholder:'Writer 1 | Writer 2'},
+        {label:'Vocalist (typeahead)',placeholder:'Search Personnel...'},
         // Tags & Project
         {label:'Tag',placeholder:'e.g. Pop Pitch',type:'tags',options:tags},
         {label:'Project',type:'select',options:projects.length?projects:['']},
@@ -321,7 +321,7 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
         // Registration
         {label:'Release Date',placeholder:'YYYY-MM-DD'},
         {label:'ISRC',placeholder:'e.g. USRC12345678'},
-        {label:'Record Label',placeholder:'Label name'},
+        {label:'Record Label (typeahead)',placeholder:'Search Labels...'},
       ],(v)=>{
     if(!v[0]||!v[0].trim()){toast('Title is required','error');return}
     const fieldMap=['Title','Artist','Producer','Audio Status','Genre','BPM','Duration','Key','Mood',
@@ -332,7 +332,15 @@ const S={page:1,perPage:999,search:new URLSearchParams(location.search).get('sea
       body:JSON.stringify(data)}).then(r=>r.json()).then(d=>{
         if(d.success){toast('Created: '+v[0]+(d.id?' ('+d.id+')':''));this.load()}
         else toast(d.error||'Failed','error')
-      }).catch(()=>toast('Network error','error'))})
+      }).catch(()=>toast('Network error','error'))});
+    // Wire typeahead on Personnel fields after modal renders
+    setTimeout(()=>{
+      wirePromptTypeahead(1,'Personnel',false);  // Artist
+      wirePromptTypeahead(2,'Personnel',true);   // Producer (multi)
+      wirePromptTypeahead(9,'Personnel',true);   // Songwriter Credits (multi)
+      wirePromptTypeahead(10,'Personnel',false);  // Vocalist
+      wirePromptTypeahead(18,'Record Labels',false); // Record Label
+    },100);
     })}
 };
 

@@ -33,25 +33,155 @@ function loadPlaylists(){
   });
 }
 
+// ---- Playlist Create Modal with song search + contact share ----
+let _plSongs=[], _plContacts=[];
+
 function createPlaylist(){
-  showPromptModal('Create Playlist',[
-    {label:'Playlist Name',placeholder:'e.g. EMMMA Singles 2026'},
-    {label:'Description (optional)',placeholder:'Songs for review...'}
-  ],(v)=>{
-    if(!v[0])return;
-    // Get selected songs from Songs page (if any in sessionStorage)
-    let songIds=[];
-    try{songIds=JSON.parse(sessionStorage.getItem('playlist_songs')||'[]')}catch(e){}
-    if(!songIds.length){
-      toast('Go to Songs page, select songs with checkboxes, then create playlist','error');return;
-    }
-    fetch('/api/playlists/create',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:v[0],description:v[1]||'',song_ids:songIds})
-    }).then(r=>r.json()).then(d=>{
-      if(d.success){toast('Playlist created: '+d.songs+' songs');sessionStorage.removeItem('playlist_songs');loadPlaylists();
-        setTimeout(()=>{window.open('/p/'+d.id,'_blank')},500)}
-      else toast(d.error||'Failed','error');
+  // Pre-load songs from sessionStorage if coming from Songs page
+  let preloaded=[];
+  try{preloaded=JSON.parse(sessionStorage.getItem('playlist_songs')||'[]')}catch(e){}
+
+  _plSongs=[];_plContacts=[];
+  const ov=document.createElement('div');ov.className='prompt-overlay';ov.id='pl-modal';
+  ov.innerHTML=`<div class="prompt-box" style="max-width:560px;max-height:85vh;overflow-y:auto">
+    <h3 style="color:var(--accent);margin-bottom:12px">Create Playlist</h3>
+    <label>Playlist Name <span style="color:var(--danger)">*</span></label>
+    <input id="pl-name" class="prompt-input" placeholder="e.g. EMMMA Singles 2026">
+    <label>Description</label>
+    <input id="pl-desc" class="prompt-input" placeholder="Songs for review...">
+    <label>Songs <span style="font-size:10px;color:var(--text-ghost)">(search by title, artist, producer)</span></label>
+    <div style="position:relative">
+      <input id="pl-song-search" class="prompt-input" placeholder="Type to search songs..." oninput="_plSearchSongs(this.value)">
+      <div id="pl-song-dd" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:60"></div>
+    </div>
+    <div id="pl-song-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;min-height:28px"></div>
+    <div id="pl-song-stats" style="font-size:10px;color:var(--text-ghost);margin-bottom:8px"></div>
+    <label>Share with contacts <span style="font-size:10px;color:var(--text-ghost)">(optional, emails playlist link)</span></label>
+    <div style="position:relative">
+      <input id="pl-contact-search" class="prompt-input" placeholder="Search contacts to share with..." oninput="_plSearchContacts(this.value)">
+      <div id="pl-contact-dd" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-raised);border:1px solid var(--border-strong);border-radius:var(--r-md);z-index:60"></div>
+    </div>
+    <div id="pl-contact-pills" style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;min-height:20px"></div>
+    <div class="prompt-actions" style="margin-top:12px">
+      <button class="btn" onclick="document.getElementById('pl-modal')?.remove()">Cancel</button>
+      <button class="btn btn-accent" onclick="_plCreate()">Create Playlist</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove()});
+  document.body.appendChild(ov);
+  document.getElementById('pl-name').focus();
+
+  // If songs were pre-selected on Songs page, load their details
+  if(preloaded.length){
+    preloaded.forEach(id=>{
+      fetch('/api/songs/'+id).then(r=>r.json()).then(rec=>{
+        const title=Object.entries(rec).find(([k])=>cleanH(k).toLowerCase()==='title');
+        const artist=Object.entries(rec).find(([k])=>cleanH(k).toLowerCase()==='artist');
+        _plAddSong({row_index:id,title:title?title[1]:'Song '+id,artist:artist?artist[1]:''});
+      }).catch(()=>{});
     });
+  }
+}
+
+let _plSongDeb;
+function _plSearchSongs(q){
+  clearTimeout(_plSongDeb);
+  const dd=document.getElementById('pl-song-dd');
+  if(!q||q.length<1){dd.style.display='none';return}
+  _plSongDeb=setTimeout(()=>{
+    fetch('/api/songs?search='+encodeURIComponent(q)+'&per_page=15').then(r=>r.json()).then(d=>{
+      const recs=d.records||[];
+      const existing=_plSongs.map(s=>s.row_index);
+      let html=recs.filter(r=>!existing.includes(r._row_index)).map(r=>{
+        const titleH=d.headers.find(h=>cleanH(h).toLowerCase()==='title')||d.headers[1]||'';
+        const artistH=d.headers.find(h=>cleanH(h).toLowerCase()==='artist')||'';
+        const durH=d.headers.find(h=>cleanH(h).toLowerCase()==='duration')||'';
+        const genreH=d.headers.find(h=>cleanH(h).toLowerCase()==='genre')||'';
+        const t=r[titleH]||'';const a=r[artistH]||'';const dur=r[durH]||'';const g=r[genreH]||'';
+        return `<div class="typeahead-item" onclick="_plPickSong(${r._row_index},'${escA(t)}','${escA(a)}','${escA(dur)}','${escA(g)}')">${esc(t)}${a?' <span style=color:var(--text-ghost)>'+esc(a)+'</span>':''}${dur?' <span style=font-size:9px;color:var(--text-ghost)>'+esc(dur)+'</span>':''}</div>`;
+      }).join('');
+      if(!html)html='<div style="padding:8px;color:var(--text-ghost);font-size:11px">No matching songs</div>';
+      dd.innerHTML=html;dd.style.display='block';
+    });
+  },200);
+}
+
+function _plPickSong(ri,title,artist,dur,genre){
+  document.getElementById('pl-song-search').value='';
+  document.getElementById('pl-song-dd').style.display='none';
+  _plAddSong({row_index:ri,title,artist,duration:dur,genre});
+}
+
+function _plAddSong(s){
+  if(_plSongs.some(x=>x.row_index===s.row_index))return;
+  _plSongs.push(s);_plRenderSongs();
+}
+
+function _plRemSong(ri){
+  _plSongs=_plSongs.filter(s=>s.row_index!==ri);_plRenderSongs();
+}
+
+function _plRenderSongs(){
+  const el=document.getElementById('pl-song-pills');
+  el.innerHTML=_plSongs.map(s=>`<span class="pill pill-link" style="font-size:11px">${esc(s.title)}${s.artist?' ('+esc(s.artist)+')':''} <span class="pill-x" onclick="_plRemSong(${s.row_index})">&times;</span></span>`).join('');
+  // Stats
+  const stats=document.getElementById('pl-song-stats');
+  const genres={};let totalSec=0;
+  _plSongs.forEach(s=>{
+    if(s.genre)(s.genre.split(/[|,]/).forEach(g=>{const t=g.trim();if(t)genres[t]=(genres[t]||0)+1}));
+    if(s.duration){const p=s.duration.split(':');if(p.length===2)totalSec+=parseInt(p[0])*60+parseInt(p[1]);else if(p.length===3)totalSec+=parseInt(p[0])*3600+parseInt(p[1])*60+parseInt(p[2])}
+  });
+  const mins=Math.floor(totalSec/60);const secs=totalSec%60;
+  const genreStr=Object.entries(genres).sort((a,b)=>b[1]-a[1]).map(([g,c])=>g+' ('+c+')').join(', ');
+  stats.textContent=_plSongs.length+' songs'+(_plSongs.length?` | ${mins}:${String(secs).padStart(2,'0')} total`:'')+(genreStr?' | '+genreStr:'');
+}
+
+let _plContactDeb;
+function _plSearchContacts(q){
+  clearTimeout(_plContactDeb);
+  const dd=document.getElementById('pl-contact-dd');
+  if(!q||q.length<1){dd.style.display='none';return}
+  _plContactDeb=setTimeout(()=>{
+    fetch('/api/search-record?q='+encodeURIComponent(q)+'&table=Personnel').then(r=>r.json()).then(d=>{
+      const existing=_plContacts.map(c=>c.name.toLowerCase());
+      let html=(d.results||[]).filter(r=>!existing.includes(r.name.toLowerCase())).slice(0,10).map(r=>
+        `<div class="typeahead-item" onclick="_plPickContact('${escA(r.name)}',${r.row_index})">${esc(r.name)} <span style="font-size:9px;color:var(--text-ghost)">${esc(r.table)}</span></div>`
+      ).join('');
+      if(!html)html='<div style="padding:8px;color:var(--text-ghost);font-size:11px">No contacts found</div>';
+      dd.innerHTML=html;dd.style.display='block';
+    });
+  },200);
+}
+
+function _plPickContact(name,ri){
+  document.getElementById('pl-contact-search').value='';
+  document.getElementById('pl-contact-dd').style.display='none';
+  if(_plContacts.some(c=>c.name===name))return;
+  _plContacts.push({name,row_index:ri});
+  _plRenderContacts();
+}
+
+function _plRenderContacts(){
+  const el=document.getElementById('pl-contact-pills');
+  el.innerHTML=_plContacts.map(c=>`<span class="pill pill-tag" style="font-size:11px;background:var(--accent)20;color:var(--accent);border:1px solid var(--accent)40">${esc(c.name)} <span class="pill-x" onclick="_plRemContact('${escA(c.name)}')">&times;</span></span>`).join('');
+}
+function _plRemContact(name){_plContacts=_plContacts.filter(c=>c.name!==name);_plRenderContacts()}
+
+function _plCreate(){
+  const name=document.getElementById('pl-name').value.trim();
+  if(!name){toast('Playlist name is required','error');return}
+  if(!_plSongs.length){toast('Add at least one song','error');return}
+  const desc=document.getElementById('pl-desc').value.trim();
+  fetch('/api/playlists/create',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,description:desc,song_ids:_plSongs.map(s=>s.row_index),share_contacts:_plContacts.map(c=>c.row_index)})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success){
+      toast('Playlist created: '+_plSongs.length+' songs');
+      sessionStorage.removeItem('playlist_songs');
+      document.getElementById('pl-modal')?.remove();
+      loadPlaylists();
+      setTimeout(()=>{window.open('/p/'+d.id,'_blank')},500);
+    } else toast(d.error||'Failed','error');
   });
 }
 
