@@ -289,8 +289,8 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
         {label:'Phone',placeholder:'+1 555 1234'},
         {label:'Tags',type:'tags',options:tagOpts},
         {label:'Genre',type:'tags',options:genOpts},
-        {label:'Record Label',placeholder:'Label name'},
-        {label:'MGMT Company',placeholder:'Management company'},
+        {label:'Record Label (typeahead)',placeholder:'Search Labels...'},
+        {label:'MGMT Company (typeahead)',placeholder:'Search MGMT...'},
         {label:'LinkedIn/Socials',placeholder:'https://linkedin.com/in/...'},
         {label:'Notes',placeholder:'Any notes about this contact'},
       ],(v)=>{
@@ -310,7 +310,12 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
                   renderDetailModal(rec,this.headers,'directory')});}
             });
           },500);
-        } else toast(d.error||'Failed','error')})})
+        } else toast(d.error||'Failed','error')})});
+    // Wire typeahead for company fields after modal renders
+    setTimeout(()=>{
+      wirePromptTypeahead(7,'Record Labels',false);  // Record Label
+      wirePromptTypeahead(8,'MGMT Companies',false); // MGMT Company
+    },100);
     })},
 
   sendToPitch(){

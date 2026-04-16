@@ -13,6 +13,17 @@ NEVER say "Done" without reading the actual file and showing the relevant lines 
 ### Data Safety Rule
 NEVER modify existing records during imports. Append only. Tags on existing records are sacred.
 
+### Unified Search Rule
+Any input that could match an existing record MUST use typeahead search against the full database. Never create standalone data. Never allow duplicates. If typed input matches 90%+ of existing, prompt to use existing or explicitly create new. This applies to:
+- **New Song**: Artist, Producer, Vocalist, Songwriter Credits typeahead into Personnel
+- **New Contact**: Record Label, MGMT Company, Publishing, Agent typeahead into company tables
+- **New Invoice**: Client typeahead into Personnel + Companies
+- **New Playlist**: Song search typeahead into Songs, contact share typeahead into Personnel
+- **Scout Tour**: Headliner and Agent/Manager typeahead into Personnel, auto-create if new
+- **Pitch form**: Contact search already uses typeahead (verify on changes)
+
+Implementation: `wirePromptTypeahead(fieldIdx, table, multiValue)` in core.js wires search onto any prompt modal input.
+
 ## Architecture
 
 - **Backend**: Flask (Python) — `app.py` is the main server
