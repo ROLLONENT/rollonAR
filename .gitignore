@@ -1,0 +1,12 @@
+token.json
+credentials.json
+.secret_key
+__pycache__/
+*.pyc
+rollon.log
+.DS_Store
+.env
+.edit_tokens.json
+migrate_attachments.py
+migrate_invoices.py
+static/lyric_docs/

@@ -1,0 +1,70 @@
+#!/bin/bash
+# ============================================================
+# ROLLON AR - Deployment Setup
+# Run this script to set up Cloudflare Tunnel for public access
+# ============================================================
+
+echo ""
+echo "  ROLLON AR - Public Deployment Setup"
+echo "  ===================================="
+echo ""
+
+# Step 1: Install cloudflared
+if ! command -v cloudflared &> /dev/null; then
+    echo "Installing Cloudflare Tunnel (cloudflared)..."
+    brew install cloudflared
+    echo "Done."
+else
+    echo "cloudflared already installed."
+fi
+
+echo ""
+echo "  SETUP INSTRUCTIONS"
+echo "  =================="
+echo ""
+echo "  1. First, make sure ROLLON AR is running:"
+echo "     cd ~/ROLLON_AR_FRESH && source ~/tour_venv/bin/activate && python3 app.py"
+echo ""
+echo "  2. In a NEW terminal tab, run the tunnel:"
+echo "     cloudflared tunnel --url http://localhost:5001"
+echo ""
+echo "  3. Cloudflare will give you a public URL like:"
+echo "     https://random-words.trycloudflare.com"
+echo ""
+echo "  4. Share that URL with writers for submissions:"
+echo "     https://random-words.trycloudflare.com/submit"
+echo ""
+echo "  5. You can access the full app from anywhere:"
+echo "     https://random-words.trycloudflare.com/login"
+echo ""
+echo "  PERMANENT SUBDOMAIN (optional)"
+echo "  =============================="
+echo "  To get a permanent URL like rollonar.rollonent.com:"
+echo ""
+echo "  a. Create a free Cloudflare account: https://dash.cloudflare.com"
+echo "  b. Add rollonent.com to Cloudflare (change nameservers)"
+echo "  c. Run: cloudflared tunnel login"
+echo "  d. Run: cloudflared tunnel create rollonar"
+echo "  e. Run: cloudflared tunnel route dns rollonar rollonar.rollonent.com"
+echo "  f. Run: cloudflared tunnel run --url http://localhost:5001 rollonar"
+echo ""
+echo "  SECURITY NOTES"
+echo "  =============="
+echo "  - /submit is public (no login) for writer submissions"
+echo "  - /submit is rate-limited to 10 submissions per hour per IP"
+echo "  - All other pages require login"
+echo "  - Admin password: set ROLLON_PASSWORD env var (default: rollon2026)"
+echo "  - Assistant password: set ROLLON_ASSISTANT_PW env var (default: assistant2026)"
+echo "  - Assistants can see Songs, Directory, Pitch but NOT Invoices"
+echo ""
+echo "  PASSWORDS"
+echo "  ========="
+echo "  To change passwords, set environment variables before running:"
+echo "    export ROLLON_PASSWORD='your_admin_password'"
+echo "    export ROLLON_ASSISTANT_PW='your_assistant_password'"
+echo "    python3 app.py"
+echo ""
+echo "  Or add them to your shell profile (~/.zshrc or ~/.bash_profile):"
+echo "    echo 'export ROLLON_PASSWORD=\"your_admin_password\"' >> ~/.bash_profile"
+echo "    echo 'export ROLLON_ASSISTANT_PW=\"your_assistant_password\"' >> ~/.bash_profile"
+echo ""
