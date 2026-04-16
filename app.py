@@ -528,6 +528,90 @@ def record_undo(table, row_index, field, old_value, new_value):
     UNDO_STACK.append({'table':table,'row_index':row_index,'field':field,
         'old_value':old_value,'new_value':new_value,'timestamp':datetime.now().isoformat()})
 
+
+# ==================== SOFT ARCHIVE (Data Protection) ====================
+ARCHIVE_SHEET = 'Archive'
+_archive_lock = threading.Lock()
+
+def _ensure_archive_sheet():
+    """Create Archive sheet if it doesn't exist."""
+    try:
+        data = sheets.get_all_rows(ARCHIVE_SHEET)
+        if data:
+            return True
+    except Exception:
+        pass
+    try:
+        sheets.create_new_sheet(ARCHIVE_SHEET)
+        archive_headers = ['Archived From', 'Archived Date', 'Archived By', 'Original Row', 'Original Data JSON']
+        sheets._retry(lambda: sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range=f"'{ARCHIVE_SHEET}'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [archive_headers]}
+        ).execute())
+        sheets._invalidate_cache(ARCHIVE_SHEET)
+        return True
+    except Exception as e:
+        logging.warning(f"Archive sheet creation failed: {e}")
+        return False
+
+def _archive_rows(sheet_name, row_indices):
+    """Soft-archive rows: copy to Archive sheet, then clear originals.
+    Returns number of rows archived."""
+    if not row_indices:
+        return 0
+    with _archive_lock:
+        _ensure_archive_sheet()
+        try:
+            headers = sheets.get_headers(sheet_name)
+            archived = 0
+            now = datetime.now().strftime('%Y-%m-%d %H:%M')
+            user = session.get('user_name', 'System') if has_request_context() else 'System'
+            archive_rows = []
+            for ri in sorted(row_indices):
+                if ri < 2:
+                    continue
+                try:
+                    row = sheets.get_row(sheet_name, ri)
+                    # Build archive record: source sheet, date, user, original row#, full data as JSON
+                    record_dict = {}
+                    for j, h in enumerate(headers):
+                        val = row[j] if j < len(row) else ''
+                        record_dict[cleanH(h)] = val
+                    archive_rows.append([
+                        sheet_name, now, user, str(ri),
+                        json.dumps(record_dict, ensure_ascii=False)
+                    ])
+                    archived += 1
+                except Exception as e:
+                    logging.warning(f"Archive read row {ri} from {sheet_name}: {e}")
+
+            # Batch append to Archive
+            if archive_rows:
+                sheets.batch_append(ARCHIVE_SHEET, archive_rows)
+
+            # Now clear the originals
+            col_letter = sheets._col_to_letter(len(headers))
+            for ri in sorted(row_indices, reverse=True):
+                if ri < 2:
+                    continue
+                sheets._retry(lambda ri=ri: sheets.service.spreadsheets().values().clear(
+                    spreadsheetId=sheets.spreadsheet_id,
+                    range=f"'{sheet_name}'!A{ri}:{col_letter}{ri}").execute())
+            sheets._invalidate_cache(sheet_name)
+            logging.info(f"Soft-archived {archived} rows from {sheet_name} to Archive")
+            return archived
+        except Exception as e:
+            logging.warning(f"Archive operation failed for {sheet_name}: {e}")
+            return 0
+
+def has_request_context():
+    """Check if we're inside a Flask request context."""
+    try:
+        _ = request.method
+        return True
+    except RuntimeError:
+        return False
+
 def build_city_lookup():
     global CITY_LOOKUP
     try:
@@ -1032,30 +1116,33 @@ def api_cities_search():
     return jsonify({'results': results[:20]})
 
 
-# ==================== MASS DELETE ====================
+# ==================== SOFT ARCHIVE (replaces hard delete) ====================
 @app.route('/api/bulk-delete', methods=['POST'])
 @login_required
 def api_bulk_delete():
-    """Delete rows by clearing them using batch operation."""
+    """Soft-archive rows: copies to Archive sheet, then clears originals."""
     d = request.json
     table = d.get('table', 'Personnel')
     row_indices = d.get('row_indices', [])
+    hard_delete = d.get('hard_delete', False)  # Only if Captain typed DELETE
     if not row_indices: return jsonify({'error': 'No rows selected'}), 400
-    sn = 'Songs' if table.lower() == 'songs' else 'Personnel'
+    sn = 'Songs' if table.lower() == 'songs' else ('Invoices' if table.lower() == 'invoices' else 'Personnel')
     try:
-        headers = sheets.get_headers(sn)
-        col_count = len(headers)
-        col_letter = sheets._col_to_letter(col_count)
-        deleted = 0
-        # Use batch clear: one API call per row instead of per cell
-        for ri in sorted(row_indices, reverse=True):
-            if ri < 2: continue
-            sheets.service.spreadsheets().values().clear(
-                spreadsheetId=sheets.spreadsheet_id,
-                range=f"'{sn}'!A{ri}:{col_letter}{ri}").execute()
-            deleted += 1
-        sheets._invalidate_cache(sn)
-        return jsonify({'success': True, 'deleted': deleted})
+        if hard_delete and session.get('role') == 'admin':
+            # Captain explicitly confirmed hard delete
+            headers = sheets.get_headers(sn)
+            col_letter = sheets._col_to_letter(len(headers))
+            for ri in sorted(row_indices, reverse=True):
+                if ri < 2: continue
+                sheets._retry(lambda ri=ri: sheets.service.spreadsheets().values().clear(
+                    spreadsheetId=sheets.spreadsheet_id,
+                    range=f"'{sn}'!A{ri}:{col_letter}{ri}").execute())
+            sheets._invalidate_cache(sn)
+            return jsonify({'success': True, 'deleted': len(row_indices), 'method': 'hard_delete'})
+        else:
+            # Default: soft archive
+            archived = _archive_rows(sn, row_indices)
+            return jsonify({'success': True, 'deleted': archived, 'method': 'archived'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -2593,6 +2680,7 @@ def api_playlists_create():
 @app.route('/api/playlists/<pid>/delete', methods=['POST'])
 @login_required
 def api_playlists_delete(pid):
+    """Soft-archive a playlist (moves to Archive sheet)."""
     try:
         data = sheets.get_all_rows('Playlists')
         if not data or len(data) < 2: return jsonify({'error': 'Not found'}), 404
@@ -2600,13 +2688,9 @@ def api_playlists_delete(pid):
         id_col = find_col(headers, 'id')
         for i, row in enumerate(data[1:]):
             if id_col is not None and id_col < len(row) and row[id_col] == pid:
-                col_letter = sheets._col_to_letter(len(headers))
                 ri = i + 2
-                sheets.service.spreadsheets().values().clear(
-                    spreadsheetId=sheets.spreadsheet_id,
-                    range=f"'Playlists'!A{ri}:{col_letter}{ri}").execute()
-                sheets._invalidate_cache('Playlists')
-                return jsonify({'success': True})
+                archived = _archive_rows('Playlists', [ri])
+                return jsonify({'success': True, 'archived': archived})
         return jsonify({'error': 'Not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2778,6 +2862,7 @@ def api_templates_save():
 @app.route('/api/templates/delete', methods=['POST'])
 @login_required
 def api_templates_delete():
+    """Soft-archive a template (moves to Archive sheet)."""
     name = request.json.get('name', '').strip()
     if not name: return jsonify({'error': 'Name required'}), 400
     try:
@@ -2786,12 +2871,8 @@ def api_templates_delete():
         headers = data[0]; nc = find_col(headers, 'name')
         for i, row in enumerate(data[1:]):
             if nc is not None and nc < len(row) and row[nc].strip().lower() == name.lower():
-                col_letter = sheets._col_to_letter(len(headers))
                 ri = i + 2
-                sheets.service.spreadsheets().values().clear(
-                    spreadsheetId=sheets.spreadsheet_id,
-                    range=f"'Templates'!A{ri}:{col_letter}{ri}").execute()
-                sheets._invalidate_cache('Templates')
+                _archive_rows('Templates', [ri])
                 return jsonify({'success': True})
         return jsonify({'error': 'Not found'}), 404
     except Exception as e:
@@ -2886,7 +2967,8 @@ def api_duplicates_v2():
 @app.route('/api/merge', methods=['POST'])
 @login_required
 def api_merge():
-    """Merge duplicate records. POST body: {table, keep_row: int, delete_rows: [int], merged_values: {field: value}}"""
+    """Merge duplicate records. Keeps winner, soft-archives losers to Archive sheet.
+    POST body: {table, keep_row: int, delete_rows: [int], merged_values: {field: value}}"""
     d = request.json or {}
     table_name = d.get('table', 'Songs')
     keep_row = d.get('keep_row')
@@ -2904,26 +2986,91 @@ def api_merge():
             if col is not None:
                 sheets.update_cell(sheet, keep_row, col + 1, value)
 
-        # Delete duplicate rows (from bottom up to preserve indices)
-        # Get sheet ID from metadata
-        meta = sheets.service.spreadsheets().get(spreadsheetId=sheets.spreadsheet_id).execute()
-        sheet_id = 0
-        for s in meta.get('sheets', []):
-            if s['properties']['title'] == sheet:
-                sheet_id = s['properties']['sheetId']; break
-        for ri in sorted(delete_rows, reverse=True):
-            sheets.service.spreadsheets().batchUpdate(
-                spreadsheetId=sheets.spreadsheet_id,
-                body={'requests': [{'deleteDimension': {'range': {
-                    'sheetId': sheet_id,
-                    'dimension': 'ROWS',
-                    'startIndex': ri - 1,
-                    'endIndex': ri
-                }}}]}
-            ).execute()
+        # Soft-archive the loser rows (NOT hard delete)
+        # Filter out keep_row from delete_rows to prevent archiving the winner
+        actual_deletes = [ri for ri in delete_rows if ri != keep_row]
+        archived = _archive_rows(sheet, actual_deletes)
 
-        sheets._invalidate_cache(sheet)
-        return jsonify({'success': True, 'kept': keep_row, 'deleted': len(delete_rows)})
+        return jsonify({'success': True, 'kept': keep_row, 'deleted': archived, 'method': 'archived'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== ARCHIVE (Data Recovery) ====================
+@app.route('/api/archive')
+@admin_required
+def api_archive():
+    """List archived records, optionally filtered by source sheet."""
+    source = request.args.get('source', '').strip()
+    try:
+        _ensure_archive_sheet()
+        data = sheets.get_all_rows(ARCHIVE_SHEET)
+        if not data or len(data) < 2:
+            return jsonify({'records': [], 'total': 0})
+        headers = data[0]
+        rows = data[1:]
+        records = []
+        for i, row in enumerate(rows):
+            rec = {'_row_index': i + 2}
+            for j, h in enumerate(headers):
+                rec[h] = row[j] if j < len(row) else ''
+            # Skip empty rows
+            if not any(v.strip() for v in row if v):
+                continue
+            if source and rec.get('Archived From', '') != source:
+                continue
+            records.append(rec)
+        records.reverse()  # Newest first
+        return jsonify({'records': records, 'total': len(records)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/archive/restore', methods=['POST'])
+@admin_required
+def api_archive_restore():
+    """Restore an archived record back to its original sheet."""
+    d = request.json or {}
+    archive_row = d.get('row_index')
+    if not archive_row:
+        return jsonify({'error': 'row_index required'}), 400
+    try:
+        _ensure_archive_sheet()
+        headers = sheets.get_headers(ARCHIVE_SHEET)
+        row = sheets.get_row(ARCHIVE_SHEET, archive_row)
+        source_col = find_col(headers, 'Archived From')
+        data_col = find_col(headers, 'Original Data JSON')
+        if source_col is None or data_col is None:
+            return jsonify({'error': 'Archive format invalid'}), 400
+
+        source_sheet = row[source_col].strip() if source_col < len(row) else ''
+        data_json = row[data_col].strip() if data_col < len(row) else '{}'
+
+        if not source_sheet:
+            return jsonify({'error': 'No source sheet recorded'}), 400
+
+        record = json.loads(data_json)
+        # Rebuild row for the original sheet
+        orig_headers = sheets.get_headers(source_sheet)
+        new_row = [''] * len(orig_headers)
+        for j, h in enumerate(orig_headers):
+            ch = cleanH(h)
+            if ch in record:
+                new_row[j] = record[ch]
+
+        # Append to original sheet
+        sheets.append_row(source_sheet, new_row)
+
+        # Clear the archive row
+        col_letter = sheets._col_to_letter(len(headers))
+        sheets._retry(lambda: sheets.service.spreadsheets().values().clear(
+            spreadsheetId=sheets.spreadsheet_id,
+            range=f"'{ARCHIVE_SHEET}'!A{archive_row}:{col_letter}{archive_row}").execute())
+        sheets._invalidate_cache(ARCHIVE_SHEET)
+        sheets._invalidate_cache(source_sheet)
+
+        name = record.get('Name', record.get('Title', 'Record'))
+        return jsonify({'success': True, 'restored': name, 'to': source_sheet})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

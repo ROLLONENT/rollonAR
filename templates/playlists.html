@@ -26,7 +26,7 @@ function loadPlaylists(){
       html+='</div>';
       html+='<button class="btn btn-sm" onclick="copyLink(\''+esc(p.ID)+'\')">Copy Link</button>';
       html+='<a class="btn btn-sm btn-accent" href="/p/'+esc(p.ID)+'" target="_blank">Open</a>';
-      html+='<button class="btn btn-sm" onclick="deletePlaylist(\''+esc(p.ID)+'\')" style="color:var(--danger)">Delete</button>';
+      html+='<button class="btn btn-sm" onclick="deletePlaylist(\''+esc(p.ID)+'\')" style="color:var(--danger)">Archive</button>';
       html+='</div>';
     });
     el.innerHTML=html;
@@ -191,7 +191,7 @@ function copyLink(pid){
 }
 
 function deletePlaylist(pid){
-  if(!confirm('Delete this playlist?'))return;
+  if(!confirm('Archive this playlist? It will be recoverable from Settings > Archive.'))return;
   fetch('/api/playlists/'+pid+'/delete',{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.success){toast('Deleted');loadPlaylists()}else toast(d.error||'Failed','error')});
 }

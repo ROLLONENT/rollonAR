@@ -13,6 +13,23 @@ NEVER say "Done" without reading the actual file and showing the relevant lines 
 ### Data Safety Rule
 NEVER modify existing records during imports. Append only. Tags on existing records are sacred.
 
+### Data Protection Rule (CRITICAL)
+No record in ROLLON AR is ever truly deleted. ALL "delete" operations are SOFT DELETES:
+1. Move the record to an "Archive" sheet tab (copies full row, then clears original)
+2. Keep all linked records, tags, history, and timestamps intact in the archive
+3. Archived records are recoverable from Settings > Archive section with a Restore button
+4. The Archive sheet has an extra "Archived From" column (source sheet) and "Archived Date"
+
+**Hard deletes are FORBIDDEN** except via an explicit Captain confirmation modal:
+"This will permanently delete X records and cannot be undone. Type DELETE to confirm."
+
+**Never auto-purge** "cold", "stale", or "inactive" data records. The Captain decides.
+Memory-only caches (rate limiter, playlist view buffer, edit tokens) are exempt.
+
+**Merge flow**: merging duplicates keeps the "winner" in the main sheet and soft-archives the "loser" to Archive (never hard delete).
+
+Implementation: `_archive_rows(sheet_name, row_indices)` in app.py copies rows to Archive sheet before clearing originals. Every endpoint that removes data calls this function first.
+
 ### Unified Search Rule
 Any input that could match an existing record MUST use typeahead search against the full database. Never create standalone data. Never allow duplicates. If typed input matches 90%+ of existing, prompt to use existing or explicitly create new. This applies to:
 - **New Song**: Artist, Producer, Vocalist, Songwriter Credits typeahead into Personnel
