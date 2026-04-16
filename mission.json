@@ -1,6 +1,6 @@
 {
   "mission": "ROLLON AR System Audit & Hardening",
-  "version": "V32h",
+  "version": "V35-audit",
   "system": {
     "name": "ROLLON AR",
     "description": "Single-operator A&R operating system replacing Airtable. Flask + Google Sheets API + Vanilla JS.",
@@ -11,18 +11,21 @@
     "sheet_id": "17b7HjbfXkV5w_Q8lRuG3Ae_7hwJ0M9F7ODVIFytBBmY",
     "airtable_base": "appsmM5G2HDXmey9T",
     "codebase_stats": {
-      "python_lines": 2712,
-      "js_lines": 2521,
-      "filter_js_lines": 385,
-      "monitor_js_lines": 255,
-      "css_lines": 875,
-      "templates": 15,
+      "python_lines": 4445,
+      "js_lines": 2606,
+      "filter_js_lines": 319,
+      "monitor_js_lines": 254,
+      "css_lines": 931,
+      "templates": 16,
       "modules": 5,
-      "endpoints": 73
+      "endpoints": 91,
+      "total_lines": 13376
     }
   },
-  "current_grade": "A",
-  "airtable_parity": "93%",
+  "current_grade": "B+",
+  "airtable_parity": "85%",
+  "v35_audit_date": "2026-04-16",
+  "v35_audit_summary": "Deep audit revealed 12 findings previously marked CLOSED that were never implemented. Core pages load and function. Two missing functions (parse_sort_fields, apply_multi_sort) cause 500 errors on invoices sort. CSRF, formula injection, retry logic, bare-except fixes all documented as done but not present in code. UI quality is excellent. Architecture is solid. Data model is sound. System needs honest remediation before deploy.",
 
   "audit_findings": [
     {
@@ -476,12 +479,206 @@
     }
   },
 
+  "v35_new_findings": [
+    {
+      "id": "F-021",
+      "title": "parse_sort_fields() and apply_multi_sort() never defined",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "description": "F-017 claimed these functions were implemented but they do not exist in app.py. Invoices endpoint calls both at line 1675-1677. Will crash with NameError on any sorted invoice query.",
+      "file": "app.py",
+      "line_range": "1675-1677"
+    },
+    {
+      "id": "F-022",
+      "title": "CSRF protection never implemented",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "description": "F-003 claimed CSRF tokens and X-CSRF-Token header checks were added. Zero references to 'csrf' or 'CSRF' exist in app.py. All POST endpoints are unprotected.",
+      "file": "app.py"
+    },
+    {
+      "id": "F-023",
+      "title": "Formula injection sanitization never implemented",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "description": "F-002 claimed sanitize_cell() and sanitize_dict() were added. Neither function exists in app.py. Public submit endpoint writes unsanitized user input to Google Sheets.",
+      "file": "app.py"
+    },
+    {
+      "id": "F-024",
+      "title": "Google Sheets retry/backoff never implemented",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "description": "F-004 claimed _retry() with exponential backoff was added to google_sheets.py. No retry logic exists. 429 errors crash the request.",
+      "file": "modules/google_sheets.py"
+    },
+    {
+      "id": "F-025",
+      "title": "41 bare except:pass blocks remain",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "description": "F-011 claimed all 36 bare except blocks were replaced. Current count: 41 in app.py + 3 in modules. Number has INCREASED.",
+      "file": "app.py, modules/"
+    },
+    {
+      "id": "F-026",
+      "title": "cleanH() missing from id_resolver module",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "description": "lyric_doc.py imports cleanH from modules.id_resolver at lines 179 and 224. Function does not exist in that module. Lyric doc generation from record dict will crash.",
+      "file": "modules/lyric_doc.py, modules/id_resolver.py"
+    },
+    {
+      "id": "F-027",
+      "title": "Passwords still hardcoded with defaults",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "description": "F-001 claimed hardcoded defaults were removed. Lines 49-50 still show: APP_PASSWORD defaults to 'rollon2026', ASSISTANT_PASSWORD to 'assistant2026'. No .env file exists.",
+      "file": "app.py",
+      "line_range": "49-50"
+    },
+    {
+      "id": "F-028",
+      "title": "Edit tokens still in-memory only",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "description": "F-013 claimed tokens persisted to .edit_tokens.json. No file persistence exists. _edit_tokens is a plain dict lost on restart.",
+      "file": "app.py",
+      "line": 86
+    },
+    {
+      "id": "F-029",
+      "title": "current_views NameError in public playlist",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "description": "Line 2437: references current_views variable that is only defined inside an if block (line 2427). If views_col is None, NameError crash.",
+      "file": "app.py",
+      "line": 2437
+    },
+    {
+      "id": "F-030",
+      "title": "SMTP email default still in source",
+      "severity": "LOW",
+      "status": "OPEN",
+      "description": "F-016 claimed email default was removed. Line 91 still shows SMTP_USER defaulting to celina@rollonent.com.",
+      "file": "app.py",
+      "line": 91
+    }
+  ],
+
+  "v35_page_audit": {
+    "note": "Server tested via code review + import test. Live endpoint testing blocked by Sheets API 429 quota. All page templates verified by reading source.",
+    "pages": [
+      {"page": "Login", "loads": "yes", "errors": 0, "ui_quality": 7, "speed": "fast", "working": ["password auth", "role detection", "session persistence"], "broken": [], "missing": []},
+      {"page": "Dashboard", "loads": "yes", "errors": 0, "ui_quality": 8, "speed": "acceptable", "working": ["song/contact counts", "stats API", "follow-ups", "briefing"], "broken": [], "missing": ["song-of-the-day", "achievement badges"]},
+      {"page": "Songs", "loads": "yes", "errors": 0, "ui_quality": 9, "speed": "acceptable", "working": ["grid display", "search", "filters", "sort (single)", "column visibility", "column resize", "bulk ops", "inline editing", "detail modal", "pill editing", "new record", "CSV export", "ViewSync", "group by", "pagination", "hide empty"], "broken": ["multi-sort crashes if invoked via sort0_field params (missing apply_multi_sort)"], "missing": []},
+      {"page": "Directory", "loads": "yes", "errors": 0, "ui_quality": 9, "speed": "acceptable", "working": ["grid display", "search", "filters", "sort (single)", "column visibility", "column resize", "bulk ops", "inline editing", "detail modal", "works-with linking", "log outreach", "new record", "CSV export", "ViewSync", "group by", "pagination", "pill editing"], "broken": [], "missing": []},
+      {"page": "Pitch", "loads": "yes", "errors": 0, "ui_quality": 8, "speed": "acceptable", "working": ["contact grid", "filter by pitch type", "template library", "campaign generation", "email drafting"], "broken": [], "missing": ["SMTP send integration", "scheduled sends"]},
+      {"page": "Invoices", "loads": "yes", "errors": 1, "ui_quality": 8, "speed": "acceptable", "working": ["grid display", "search", "filters", "new invoice", "auto-numbering", "mark paid", "entity detection"], "broken": ["sort crashes with NameError (missing parse_sort_fields/apply_multi_sort)"], "missing": ["PDF generation requires reportlab install"]},
+      {"page": "Calendar", "loads": "yes", "errors": 0, "ui_quality": 8, "speed": "acceptable", "working": ["monthly view", "song cards", "date field switching"], "broken": [], "missing": []},
+      {"page": "Playlists", "loads": "yes", "errors": 0, "ui_quality": 7, "speed": "fast", "working": ["list playlists", "create playlist", "delete playlist", "copy link"], "broken": [], "missing": []},
+      {"page": "Public Playlist", "loads": "conditional", "errors": 1, "ui_quality": 9, "speed": "fast", "working": ["audio player", "track list", "volume", "scrub", "keyboard shortcuts"], "broken": ["NameError if views_col is None (F-029)"], "missing": []},
+      {"page": "Scout", "loads": "yes", "errors": 0, "ui_quality": 8, "speed": "acceptable", "working": ["artist leads", "tour opportunities", "sync briefs", "add/update leads", "convert to directory"], "broken": [], "missing": []},
+      {"page": "Submit", "loads": "yes", "errors": 0, "ui_quality": 9, "speed": "fast", "working": ["song submission form", "songwriter splits", "genre autocomplete", "writer search", "edit token system"], "broken": ["no formula injection protection (F-023)"], "missing": []},
+      {"page": "Search", "loads": "yes", "errors": 0, "ui_quality": 7, "speed": "fast", "working": ["cross-table search", "grouped results", "click to navigate"], "broken": [], "missing": []},
+      {"page": "Settings", "loads": "yes", "errors": 0, "ui_quality": 6, "speed": "fast", "working": ["cache rebuild", "timezone calc", "duplicate finder"], "broken": [], "missing": ["field type management UI", "user management"]}
+    ]
+  },
+
+  "v35_grades": {
+    "security": {"grade": "C+", "reasoning": "No CSRF protection. No formula injection sanitization. Passwords hardcoded. Public submit endpoint writes unsanitized input. Rate limiter exists but no IP cleanup. Edit tokens in-memory only."},
+    "code_quality": {"grade": "B", "reasoning": "Well-structured Flask app with clear separation. 41 bare except blocks. 2 missing function definitions that crash at runtime. Redundant imports. cleanH import path wrong in lyric_doc. But core architecture is solid and maintainable."},
+    "design": {"grade": "A-", "reasoning": "Excellent dark theme with cohesive gold accent system. Professional typography choices. Pill/tag system is beautiful. Modal and grid design matches Airtable quality. Some CSS variable inconsistencies. Mobile responsiveness limited."},
+    "performance": {"grade": "B-", "reasoning": "120s cache TTL is good. Batch updates reduce API calls. But no retry on 429 errors. threaded=False blocks concurrent requests. Startup hangs if Sheets API is slow. Prefetch engine is clever but needs throttling."},
+    "overall": {"grade": "B+", "reasoning": "Genuinely impressive system for a solo operator tool. 91 endpoints, 16 pages, working grid/filter/sort/modal system. The UI is production-quality. But 12 findings marked as fixed that were never implemented means the system is less hardened than believed. Core functionality works. Security and error handling need honest remediation."}
+  },
+
+  "roadmap": {
+    "day_2_today": {
+      "date": "2026-04-16",
+      "tasks": [
+        "Implement parse_sort_fields() and apply_multi_sort() (fixes invoice crash)",
+        "Add sanitize_cell() for formula injection protection on public submit",
+        "Fix cleanH import in lyric_doc.py (import from app or define locally)",
+        "Fix current_views NameError in public playlist endpoint",
+        "Add CSRF token generation and validation middleware",
+        "Replace 10 most critical bare except blocks with proper error handling"
+      ]
+    },
+    "day_3": {
+      "date": "2026-04-17",
+      "tasks": [
+        "Cloud deploy to rollonent.com (Railway or Render)",
+        "Submit form live for real writers",
+        "Test playlist sharing with real links",
+        "Configure SMTP for confirmation emails",
+        "Add Google Sheets API retry with exponential backoff"
+      ]
+    },
+    "day_4": {
+      "date": "2026-04-18",
+      "tasks": [
+        "Send first real pitch campaign through system",
+        "Generate first invoice PDF and email to client",
+        "Test lyric doc auto-creation from real submission",
+        "Install reportlab for PDF generation"
+      ]
+    },
+    "day_5": {
+      "date": "2026-04-19",
+      "tasks": [
+        "Scout page operational with real leads",
+        "First artist outreach for writing sessions",
+        "Test distribution channel CSV export",
+        "Remaining bare except blocks fixed"
+      ]
+    },
+    "end_of_week_1": {
+      "date": "2026-04-20",
+      "tasks": [
+        "Full system operational and deployed",
+        "All security findings genuinely closed",
+        "Daily workflow running through ROLLON AR",
+        "Airtable and DISCO cancellation evaluated"
+      ]
+    },
+    "week_2": {
+      "tasks": [
+        "Mobile responsive CSS pass",
+        "Morning briefing dashboard enhanced",
+        "Distribution channels tested with real partners",
+        "Song DNA matching prototype"
+      ]
+    },
+    "week_3": {
+      "tasks": [
+        "Play analytics with real data",
+        "Pitch response tracking and conversion rates",
+        "Invoice automation proven with real payments",
+        "System refined from daily usage feedback"
+      ]
+    },
+    "week_4": {
+      "tasks": [
+        "Productize evaluation",
+        "Multi-tenant architecture assessment",
+        "Pricing model research",
+        "First beta tester identified"
+      ]
+    }
+  },
+
   "version_history": [
     {"version": "V32d", "changes": "Audio Status pills, duration format, notes modal, splits validation, equal splits, URL prefill", "grade": "B+", "parity": "89%"},
     {"version": "V32e", "changes": "SMTP confirmations, edit tokens, playlists, email templates, follow-up reminders, performance monitor", "grade": "B+", "parity": "90%"},
     {"version": "V32f", "changes": "Pitch page 95% overhaul: search, bulk ops, history, dupe check, round auto-increment, timezone send, CSV export", "grade": "B+", "parity": "90%"},
     {"version": "V32g", "changes": "Multi-select tag fields, behavioral search intelligence, 90+ city timezone mapping, invoice form upgrade", "grade": "B+", "parity": "91%"},
-    {"version": "V32h", "changes": "Formula injection fix, CSRF protection, column resize, ViewSync to Sheets API, cache version bump", "grade": "A-", "parity": "91%"}
+    {"version": "V32h", "changes": "Formula injection fix, CSRF protection, column resize, ViewSync to Sheets API, cache version bump", "grade": "A-", "parity": "91%"},
+    {"version": "V33", "changes": "Brand system, music supervisors, dynamic filters, lyric docs", "grade": "A-", "parity": "91%"},
+    {"version": "V34", "changes": "Music player, invoice system, dynamic data, UI improvements", "grade": "A-", "parity": "92%"},
+    {"version": "V35", "changes": "Distribution system, intelligence layer, dynamic forms, keyboard shortcuts, scout engine", "grade": "A-", "parity": "92%"},
+    {"version": "V35-audit", "changes": "Deep audit revealed 10 new findings (12 previously claimed fixes not implemented). Honest grades, roadmap, product vision in FEATURES.md", "grade": "B+", "parity": "85%"}
   ],
 
   "conventions": {
