@@ -4405,7 +4405,7 @@ def api_city_intelligence(city_name):
 
 @app.route('/api/intelligence/smart-defaults')
 @login_required
-def api_smart_defaults():
+def api_intelligence_smart_defaults():
     """Smart defaults: analyze a producer's genre distribution, common co-writers, vocalists."""
     producer = request.args.get('producer', '').strip()
     if not producer:
