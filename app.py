@@ -1946,6 +1946,243 @@ def _tag_and_stamp_mm_contacts(row_indices, tag_name):
     except Exception as e:
         logging.warning('Tag/stamp mm contacts failed: %s', e)
 
+def _build_drive_service():
+    from googleapiclient.discovery import build as _gbuild
+    return _gbuild('drive', 'v3', credentials=sheets._get_creds())
+
+def _ensure_pitch_folder():
+    drive = _build_drive_service()
+    q = ("name='" + PITCH_FOLDER_NAME + "' and mimeType='application/vnd.google-apps.folder' and trashed=false")
+    res = drive.files().list(q=q, fields='files(id,name)', pageSize=1).execute()
+    files = res.get('files', [])
+    if files:
+        return files[0]['id']
+    folder = drive.files().create(
+        body={'name': PITCH_FOLDER_NAME, 'mimeType': 'application/vnd.google-apps.folder'},
+        fields='id'
+    ).execute()
+    return folder['id']
+
+def _create_mm_spreadsheet(title, data_rows, folder_id):
+    svc = sheets.service
+    body = {
+        'properties': {'title': title},
+        'sheets': [
+            {'properties': {'title': 'Sheet1'}},
+            {'properties': {'title': 'Mail Merge Logs'}},
+        ],
+    }
+    spreadsheet = sheets._retry(lambda: svc.spreadsheets().create(body=body).execute())
+    new_id = spreadsheet['spreadsheetId']
+    sheets._retry(lambda: svc.spreadsheets().values().update(
+        spreadsheetId=new_id, range="'Sheet1'!A1",
+        valueInputOption='USER_ENTERED',
+        body={'values': [MAIL_MERGE_HEADERS] + data_rows}
+    ).execute())
+    try:
+        if folder_id:
+            drive = _build_drive_service()
+            drive.files().update(fileId=new_id, addParents=folder_id, fields='id,parents').execute()
+    except Exception as e:
+        logging.warning('Mail merge sheet folder move failed: %s', e)
+    return {
+        'spreadsheet_id': new_id,
+        'url': 'https://docs.google.com/spreadsheets/d/' + new_id + '/edit',
+    }
+
+def _fetch_mm_contacts(row_indices):
+    data = sheets.get_all_rows('Personnel')
+    if not data or len(data) < 2:
+        return []
+    headers = data[0]
+    def col(name):
+        for j, h in enumerate(headers):
+            if cleanH(h).lower() == name.lower():
+                return j
+        return None
+    nc = col('Name'); ec = col('Email'); cc = col('City')
+    mc = col('MGMT Company'); lc = col('Record Label'); pc = col('Publishing Company')
+    indices = set(int(i) for i in (row_indices or []) if i)
+    rows = data[1:]
+    out = []
+    for idx, r in enumerate(rows, start=2):
+        if indices and idx not in indices:
+            continue
+        def g(ci):
+            return r[ci].strip() if ci is not None and ci < len(r) and r[ci] else ''
+        email = g(ec)
+        if not email:
+            continue
+        city = g(cc)
+        out.append({
+            'row_index': idx,
+            'name': g(nc),
+            'email': email,
+            'city': city,
+            'mgmt': g(mc),
+            'label': g(lc),
+            'publisher': g(pc),
+            'timezone': _timezone_for_city(city),
+        })
+    return out
+
+def _group_mm_contacts(contacts, group_by_company):
+    if not group_by_company:
+        out = []
+        for c in contacts:
+            first = (c.get('name') or '').strip().split()
+            out.append({
+                'first_name': first[0] if first else '',
+                'email': c.get('email', ''),
+                'tz': c.get('timezone') or '',
+                'row_indices': [c['row_index']],
+            })
+        return out
+    groups = {}
+    loose = []
+    for c in contacts:
+        key = None
+        for field in ('mgmt', 'label', 'publisher'):
+            v = (c.get(field) or '').strip()
+            if v:
+                key = (field, v.lower())
+                break
+        if key is None:
+            loose.append(c)
+        else:
+            groups.setdefault(key, []).append(c)
+    out = []
+    for _, members in groups.items():
+        firsts = [((m.get('name') or '').split() or [''])[0] for m in members]
+        firsts = [f for f in firsts if f]
+        if len(members) == 1:
+            display = firsts[0] if firsts else ''
+        elif len(members) <= 3:
+            if len(firsts) == 2:
+                display = firsts[0] + ' & ' + firsts[1]
+            elif len(firsts) >= 3:
+                display = ', '.join(firsts[:-1]) + ' & ' + firsts[-1]
+            else:
+                display = firsts[0] if firsts else ''
+        else:
+            display = 'all'
+        emails = ', '.join(m.get('email', '') for m in members if m.get('email'))
+        tz = next((m.get('timezone') for m in members if m.get('timezone')), '')
+        out.append({
+            'first_name': display,
+            'email': emails,
+            'tz': tz,
+            'row_indices': [m['row_index'] for m in members],
+        })
+    for c in loose:
+        first = (c.get('name') or '').strip().split()
+        out.append({
+            'first_name': first[0] if first else '',
+            'email': c.get('email', ''),
+            'tz': c.get('timezone') or '',
+            'row_indices': [c['row_index']],
+        })
+    return out
+
+def _resolve_mm_rows(payload):
+    """If row_indices provided, use them; else use current filtered view."""
+    rowidx = payload.get('row_indices') or []
+    if rowidx:
+        return _fetch_mm_contacts(rowidx)
+    filter_args = payload.get('filter_args') or {}
+    try:
+        data = sheets.get_all_rows('Personnel')
+        if not data:
+            return []
+        headers = data[0]
+        rows = [(i + 2, r) for i, r in enumerate(data[1:])]
+        search = (filter_args.get('search') or '').strip().lower()
+        if search:
+            rows = [(ri, r) for ri, r in rows if any(search in str(c).lower() for c in r)]
+        advf = []
+        for i in range(20):
+            cvar = filter_args.get('f' + str(i) + '_col', '').strip()
+            op = filter_args.get('f' + str(i) + '_op', 'contains').strip()
+            val = filter_args.get('f' + str(i) + '_val', '').strip()
+            if cvar:
+                advf.append({'col': cvar, 'op': op, 'val': val})
+        mode = (filter_args.get('filter_mode') or 'and').lower()
+        if advf:
+            if mode == 'or':
+                allr = rows; matched = set()
+                for f in advf:
+                    ci = None
+                    for j, h in enumerate(headers):
+                        if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
+                            ci = j; break
+                    if ci is None: continue
+                    for ri, r in allr:
+                        if ri not in matched:
+                            if apply_filter([(ri, r)], ci, f['op'], f['val']):
+                                matched.add(ri)
+                rows = [(ri, r) for ri, r in allr if ri in matched]
+            else:
+                for f in advf:
+                    ci = None
+                    for j, h in enumerate(headers):
+                        if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
+                            ci = j; break
+                    if ci is None: continue
+                    rows = apply_filter(rows, ci, f['op'], f['val'])
+        return _fetch_mm_contacts([ri for ri, _ in rows])
+    except Exception as e:
+        logging.warning('_resolve_mm_rows error: %s', e)
+        return []
+
+@app.route('/api/directory/mail-merge-preview', methods=['POST'])
+@admin_required
+def api_mail_merge_preview():
+    payload = request.get_json(silent=True) or {}
+    group_by = bool(payload.get('group_by_company', True))
+    contacts = _resolve_mm_rows(payload)
+    rows = _group_mm_contacts(contacts, group_by)
+    return jsonify({'contact_count': len(contacts), 'row_count': len(rows)})
+
+@app.route('/api/directory/mail-merge-export', methods=['POST'])
+@admin_required
+def api_mail_merge_export():
+    payload = request.get_json(silent=True) or {}
+    pitch_name = (payload.get('pitch_name') or '').strip()
+    group_by = bool(payload.get('group_by_company', True))
+    if not pitch_name:
+        return jsonify({'error': 'Pitch name is required'}), 400
+    contacts = _resolve_mm_rows(payload)
+    if not contacts:
+        return jsonify({'error': 'No contacts with email found in the selection'}), 400
+    groups = _group_mm_contacts(contacts, group_by)
+    today = datetime.now().date()
+    tomorrow = today + timedelta(days=1)
+    data_rows = []
+    for g in groups:
+        scheduled = _format_mm_schedule(10, 22, g.get('tz', ''), tomorrow)
+        data_rows.append([g['first_name'], g['email'], scheduled, '', ''])
+    data_rows.sort(key=lambda r: r[2])
+    title = pitch_name + ' - ' + today.strftime('%b %d %Y')
+    try:
+        folder_id = _ensure_pitch_folder()
+    except Exception as e:
+        logging.warning('Pitch folder resolve failed: %s', e)
+        folder_id = None
+    result = _create_mm_spreadsheet(title, data_rows, folder_id)
+    _log_mm_pitch(pitch_name, len(groups), result['url'])
+    all_ris = []
+    for g in groups:
+        all_ris.extend(g.get('row_indices') or [])
+    _tag_and_stamp_mm_contacts(all_ris, 'Pitched: ' + pitch_name)
+    return jsonify({
+        'success': True,
+        'url': result['url'],
+        'spreadsheet_id': result['spreadsheet_id'],
+        'title': title,
+        'row_count': len(data_rows),
+        'contact_count': len(contacts),
+    })
+
 
 # ==================== WORKS WITH ====================
 @app.route('/api/automate/works-with', methods=['POST'])
