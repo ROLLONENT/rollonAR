@@ -41,6 +41,9 @@
       <button class="btn" id="btn-group" onclick="D.showGroupPanel()">▦ Group</button>
       <button class="btn btn-accent" onclick="D.newRecord()">+ New Contact</button>
       <button class="btn" id="pitch-btn" onclick="D.sendToPitch()" style="display:none">🚀 Send to Pitch</button>
+      {% if session.get('role') == 'admin' %}
+      <button class="btn btn-purple" onclick="D.openMailMergeExport()" title="Create YAMM-ready Google Sheet for Gmail mail merge">✉ Export to Mail Merge</button>
+      {% endif %}
       <button class="btn btn-sm" onclick="showImportDialog('directory')" title="Import CSV">📥</button>
       <button class="btn btn-sm" onclick="exportViewCSV('directory')" title="Export current view">📤</button>
       <button class="btn btn-sm" onclick="togglePillColors()" title="Toggle pill colors">🎨</button>
@@ -317,6 +320,74 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       wirePromptTypeahead(8,'MGMT Companies',false); // MGMT Company
     },100);
     })},
+
+  // v35.6 Export current selection or filtered view to a YAMM-ready Google Sheet.
+  _mmFilterArgs(){
+    const a={};
+    if(this.search)a.search=this.search;
+    if(this.sortField){a.sort=this.sortField;a.dir=this.sortDir}
+    if(window._filterMode==='or')a.filter_mode='or';
+    this.filters.forEach((f,i)=>{if(f.col){a['f'+i+'_col']=f.col;a['f'+i+'_op']=f.op;a['f'+i+'_val']=f.val||''}});
+    return a;
+  },
+
+  openMailMergeExport(){
+    const selRows=Array.from(window._selectedRows||[]);
+    const srcLabel=selRows.length?(selRows.length+' selected rows'):'current filtered view';
+    const fargs=this._mmFilterArgs();
+    const html=`
+      <div class="prompt-overlay" id="mm-modal">
+        <div class="prompt-box" style="width:440px">
+          <h3>Export to Mail Merge</h3>
+          <div class="prompt-fields">
+            <label>Pitch Name <span style="color:var(--danger)">*</span></label>
+            <input id="mm-pitch-name" class="prompt-input" placeholder="EMMMA London Writing Sessions">
+            <label style="margin-top:14px">Source</label>
+            <div style="color:var(--text-dim);font-size:12px;padding:4px 0">${esc(srcLabel)}</div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;font-weight:400">
+              <input type="checkbox" id="mm-group-by" checked style="width:16px;height:16px;cursor:pointer">
+              <span>Group by Company (MGMT / Label / Publisher)</span>
+            </label>
+            <div id="mm-preview" style="margin-top:14px;padding:10px;background:var(--bg-surface);border-radius:var(--r-md);font-size:12px;color:var(--text-dim);text-align:center">Loading preview...</div>
+          </div>
+          <div class="prompt-actions">
+            <button class="btn" onclick="document.getElementById('mm-modal')?.remove()">Cancel</button>
+            <button class="btn btn-purple" id="mm-create-btn">Create Mail Merge Sheet</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+    const refresh=()=>{
+      const gb=document.getElementById('mm-group-by');if(!gb)return;
+      const el=document.getElementById('mm-preview');if(el)el.textContent='Loading preview...';
+      fetch('/api/directory/mail-merge-preview',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({group_by_company:gb.checked,row_indices:selRows,filter_args:fargs})
+      }).then(r=>r.json()).then(d=>{
+        const e2=document.getElementById('mm-preview');if(!e2)return;
+        if(d.error){e2.textContent='Preview failed: '+d.error;return}
+        e2.innerHTML=`<strong style="color:var(--text)">${d.contact_count}</strong> contacts to <strong style="color:var(--text)">${d.row_count}</strong> rows after grouping`;
+      }).catch(()=>{const e2=document.getElementById('mm-preview');if(e2)e2.textContent='Preview failed'});
+    };
+    document.getElementById('mm-group-by').addEventListener('change',refresh);
+    refresh();
+    setTimeout(()=>document.getElementById('mm-pitch-name')?.focus(),50);
+    document.getElementById('mm-create-btn').onclick=()=>{
+      const name=(document.getElementById('mm-pitch-name').value||'').trim();
+      if(!name){toast('Pitch Name is required','error');return}
+      const gb=document.getElementById('mm-group-by').checked;
+      const btn=document.getElementById('mm-create-btn');
+      btn.disabled=true;btn.textContent='Creating...';
+      fetch('/api/directory/mail-merge-export',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pitch_name:name,group_by_company:gb,row_indices:selRows,filter_args:fargs})
+      }).then(r=>r.json()).then(d=>{
+        if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet';return}
+        toast('Mail Merge sheet created: '+d.row_count+' rows');
+        document.getElementById('mm-modal')?.remove();
+        if(d.url)window.open(d.url,'_blank');
+        this.load();
+      }).catch(()=>{toast('Export failed','error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet'});
+    };
+  },
 
   sendToPitch(){
     const nameH=this.headers.find(h=>cleanH(h).toLowerCase()==='name');

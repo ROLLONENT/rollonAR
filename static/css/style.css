@@ -62,6 +62,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;o
 .btn-sm{padding:4px 10px;font-size:11px}
 .btn-danger{border-color:rgba(248,113,113,.3);color:var(--danger)}
 .btn-danger:hover{background:rgba(248,113,113,.1)}
+.btn-purple{background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:#fff;border-color:transparent;box-shadow:var(--sh-sm)}
+.btn-purple:hover{background:linear-gradient(135deg,#a78bfa,#8b5cf6);color:#fff;border-color:transparent;box-shadow:var(--sh-md)}
 .btn[disabled]{opacity:.4;pointer-events:none}
 .toolbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
 .toolbar-info{font-size:11px;color:var(--text-muted);font-family:var(--font-m);background:var(--bg-deep);padding:3px 10px;border-radius:var(--r-pill);border:1px solid var(--border-subtle)}
