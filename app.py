@@ -1874,6 +1874,78 @@ def _format_mm_schedule(target_hour, target_minute, tz_str, base_date):
         dt = dt + timedelta(minutes=delta_min)
         return dt.strftime('%d/%m/%Y %H:%M:%S')
 
+def _ensure_pitch_log_tab():
+    try:
+        existing = sheets.get_all_rows('Pitch Log')
+        if existing:
+            return True
+    except Exception:
+        pass
+    try:
+        sheets._retry(lambda: sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': 'Pitch Log'}}}]}
+        ).execute())
+        headers = ['Date', 'Round', 'Pitch Type', 'Contact Name', 'Contact Email',
+                   'Song Title', 'DISCO Link', 'Status', 'Response Date', 'Notes']
+        sheets._retry(lambda: sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id, range="'Pitch Log'!A1",
+            valueInputOption='USER_ENTERED', body={'values': [headers]}
+        ).execute())
+        sheets._invalidate_cache('Pitch Log')
+        return True
+    except Exception as e:
+        logging.warning('Pitch Log ensure failed: %s', e)
+        return False
+
+def _log_mm_pitch(pitch_name, contact_count, sheet_url):
+    if not _ensure_pitch_log_tab():
+        return
+    today = datetime.now().strftime('%Y-%m-%d')
+    row = [today, str(contact_count), pitch_name, '', '', '', sheet_url,
+           'Ready to Send', '', 'Mail Merge Export']
+    try:
+        sheets.batch_append('Pitch Log', [row])
+    except Exception as e:
+        logging.warning('Pitch Log append failed: %s', e)
+
+def _tag_and_stamp_mm_contacts(row_indices, tag_name):
+    ris = [int(i) for i in (row_indices or []) if i]
+    if not ris:
+        return
+    try:
+        data = sheets.get_all_rows('Personnel')
+        if not data:
+            return
+        headers = data[0]
+        def col(name):
+            for j, h in enumerate(headers):
+                if cleanH(h).lower() == name.lower():
+                    return j
+            return None
+        tc = col('Tags')
+        lc = col('Last Outreach')
+        today = datetime.now().strftime('%Y-%m-%d')
+        updates = []
+        rows = data[1:]
+        for ri in ris:
+            idx = ri - 2
+            if idx < 0 or idx >= len(rows):
+                continue
+            r = rows[idx]
+            if tc is not None:
+                cur = r[tc].strip() if tc < len(r) else ''
+                parts = [t.strip() for t in cur.split('|') if t.strip()] if cur else []
+                if tag_name not in parts:
+                    parts.append(tag_name)
+                    updates.append((ri, tc + 1, ' | '.join(parts)))
+            if lc is not None:
+                updates.append((ri, lc + 1, today))
+        if updates:
+            sheets.batch_update_cells('Personnel', updates)
+    except Exception as e:
+        logging.warning('Tag/stamp mm contacts failed: %s', e)
+
 
 # ==================== WORKS WITH ====================
 @app.route('/api/automate/works-with', methods=['POST'])
