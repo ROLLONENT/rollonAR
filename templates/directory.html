@@ -50,6 +50,18 @@
       <button class="btn btn-sm" onclick="openDuplicateFinder()" title="Find duplicate records">🔍 Dupes</button>
       <div class="toolbar-right"><span class="toolbar-info" id="record-count"></span></div>
     </div>
+    <div class="emergency-filters" title="Temporary hardcoded filters (universal filter fix in v35.7)">
+      <span class="ef-label">Quick filters</span>
+      <button class="btn-ef" onclick="D.qpf('uk')">UK Contacts</button>
+      <button class="btn-ef" onclick="D.qpf('us')">US Contacts</button>
+      <button class="btn-ef" onclick="D.qpf('mgmt')">MGMT Only</button>
+      <button class="btn-ef" onclick="D.qpf('writer_mgmt')">Writer MGMT</button>
+      <button class="btn-ef" onclick="D.qpf('publishers')">Publishers</button>
+      <button class="btn-ef" onclick="D.qpf('labels')">Labels</button>
+      <button class="btn-ef" onclick="D.qpf('agents')">Agents</button>
+      <button class="btn-ef" onclick="D.qpf('dance')">Dance</button>
+      <button class="btn-ef btn-ef-clear" onclick="D.qpf('clear')" title="Clear quick filter">Clear</button>
+    </div>
     <div class="bulk-bar" id="bulk-bar">
       <span class="bulk-count">0 selected</span>
       <span class="bulk-select-all" id="select-all-filtered" onclick="selectAllFiltered('directory')" style="display:none">Select all results</span>
@@ -320,6 +332,31 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       wirePromptTypeahead(8,'MGMT Companies',false); // MGMT Company
     },100);
     })},
+
+  // v35.6 Emergency hardcoded quick-filter presets. Temp workaround while
+  // universal filter system is broken; remove in v35.7 once parity restored.
+  qpf(preset){
+    const presets={
+      uk:{filters:[{col:'Countries',op:'contains',val:'United Kingdom'}],mode:'and'},
+      us:{filters:[{col:'Countries',op:'contains',val:'United States'}],mode:'and'},
+      mgmt:{filters:[{col:'Field',op:'contains',val:'MGMT'}],mode:'and'},
+      writer_mgmt:{filters:[{col:'Field',op:'contains',val:'Writer MGMT'}],mode:'and'},
+      publishers:{filters:[{col:'Field',op:'contains',val:'Publisher'}],mode:'and'},
+      labels:{filters:[{col:'Field',op:'contains',val:'Label'}],mode:'and'},
+      agents:{filters:[{col:'Field',op:'contains',val:'Agent'}],mode:'and'},
+      dance:{filters:[{col:'Tags',op:'contains',val:'Dance'},{col:'Genre',op:'contains',val:'Dance'}],mode:'or'},
+      clear:{filters:[],mode:'and'},
+    };
+    const p=presets[preset];if(!p)return;
+    window._filterMode=p.mode;
+    this.filters=p.filters.map(f=>({...f}));
+    this.page=1;this.load();
+    if(p.filters.length){
+      document.getElementById('filter-panel').classList.add('open');
+      const rf=()=>buildFilterPanelV2('filter-panel',this.allCols,this.headers,this.filters,(f)=>{this.filters=f;this.page=1;this.load();rf()});
+      rf();
+    }
+  },
 
   // v35.6 Export current selection or filtered view to a YAMM-ready Google Sheet.
   _mmFilterArgs(){
