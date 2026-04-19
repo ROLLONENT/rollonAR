@@ -1843,6 +1843,38 @@ def api_directory_bulk_tag():
     return api_bulk_update()
 
 
+# ==================== MAIL MERGE EXPORT (v35.6) ====================
+# YAMM-compatible Google Sheet export for manual Gmail mail merge.
+# Sender timezone assumed Europe/London (Celina's local time).
+
+PITCH_FOLDER_NAME = 'ROLLON AR Pitches'
+MAIL_MERGE_HEADERS = ['First Name', 'Email Address', 'Scheduled Date', 'File Attachments', 'Mail Merge Status']
+
+def _timezone_for_city(city):
+    if not city:
+        return ''
+    entry = CITY_LOOKUP.get(str(city).strip().lower(), {})
+    return (entry.get('timezone') or '').strip()
+
+def _format_mm_schedule(target_hour, target_minute, tz_str, base_date):
+    """Return DD/MM/YYYY HH:MM:SS for {base_date} at {hour:minute} recipient local,
+    converted to Europe/London sender local time. Falls back to TIMEZONE_OFFSETS."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz_name = tz_str if tz_str else 'Europe/London'
+        recip = ZoneInfo(tz_name)
+        sender = ZoneInfo('Europe/London')
+        local_dt = datetime(base_date.year, base_date.month, base_date.day,
+                            target_hour, target_minute, 0, tzinfo=recip)
+        return local_dt.astimezone(sender).strftime('%d/%m/%Y %H:%M:%S')
+    except Exception:
+        recip_off = TIMEZONE_OFFSETS.get(tz_str, 0) if tz_str else 0
+        delta_min = int((0 - recip_off) * 60)
+        dt = datetime(base_date.year, base_date.month, base_date.day, target_hour, target_minute, 0)
+        dt = dt + timedelta(minutes=delta_min)
+        return dt.strftime('%d/%m/%Y %H:%M:%S')
+
+
 # ==================== WORKS WITH ====================
 @app.route('/api/automate/works-with', methods=['POST'])
 @login_required
