@@ -6,6 +6,20 @@
 
 ---
 
+## v35.6 Release Notes (2026-04-19)
+
+### Mail Merge Export (Directory > Captain only)
+Purple "Export to Mail Merge" button ships a YAMM-ready Google Sheet into Drive folder "ROLLON AR Pitches". Modal takes Pitch Name, honours selection vs. current filtered view, and offers a Group by Company toggle with a live count preview. The generated sheet matches YAMM's exact 5-column format (First Name, Email Address, Scheduled Date, File Attachments, Mail Merge Status) with a second "Mail Merge Logs" tab left empty for YAMM to populate.
+
+**Data behaviour.** Contacts at the same MGMT / Label / Publisher combine into one row: 1 = first name, 2-3 = "A & B" / "A, B & C", 4+ = "all", with emails joined by comma. Scheduled Date staggers by recipient timezone (Cities sheet + zoneinfo with TIMEZONE_OFFSETS fallback) so each contact receives at 10:22 AM local, converted to Celina's Europe/London send window; missing timezone defaults to London.
+
+**Side effects.** Summary row appended to Pitch Log (Status = Ready to Send, URL in DISCO Link column). Each exported contact gets a `Pitched: {Pitch Name}` tag and Last Outreach = today in Personnel. Email sending is out of scope, Celina writes the body in Gmail and runs YAMM manually.
+
+### Emergency Quick Filter Pills (Directory)
+Temporary hardcoded pill row below the toolbar (UK / US / MGMT Only / Writer MGMT / Publishers / Labels / Agents / Dance) to unblock pitching while the universal filter system is broken. Dance uses OR mode across Tags and Genre. Removal targeted for v35.7 once universal filter parity is restored.
+
+---
+
 ## TIER 1 - FORCE MULTIPLIERS (10x Celina's output)
 
 ### 1. Morning Briefing Dashboard (partially built)
