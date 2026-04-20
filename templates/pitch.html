@@ -36,7 +36,7 @@
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
         <div><label style="font-size:11px;color:var(--text-muted);display:block">DISCO / Playlist Link</label><input id="p-link" class="form-input" placeholder="https://disco.ac/..."></div>
         <div><label style="font-size:11px;color:var(--text-muted);display:block">Round</label><input id="p-round" class="form-input" value="001"></div>
-        <div><label style="font-size:11px;color:var(--text-muted);display:block">Send Date</label><input type="date" id="p-date" class="form-input"></div>
+        <div><label style="font-size:11px;color:var(--text-muted);display:block">Send Date/Time</label><input type="datetime-local" id="p-date" class="form-input"></div>
       </div>
       <div style="margin-top:8px"><textarea id="p-bespoke" class="form-input" rows="3" placeholder="Bespoke paragraph (optional)..." style="resize:vertical"></textarea></div>
       <div style="margin-top:8px;display:flex;gap:8px">
@@ -52,8 +52,9 @@
 {% block scripts %}
 <script>
 const today=new Date();const dtt=(2-today.getDay()+7)%7||7;
-const nt=new Date(today);nt.setDate(today.getDate()+dtt);
-document.getElementById('p-date').value=nt.toISOString().split('T')[0];
+const nt=new Date(today);nt.setDate(today.getDate()+dtt);nt.setHours(11,6,0,0);
+const _pdp=n=>String(n).padStart(2,'0');
+document.getElementById('p-date').value=`${nt.getFullYear()}-${_pdp(nt.getMonth()+1)}-${_pdp(nt.getDate())}T${_pdp(nt.getHours())}:${_pdp(nt.getMinutes())}`;
 
 const P={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allCols:[],visibleCols:[],
   headers:[],currentView:'All',views:{},group:'',groupDir:'asc',lastRecords:[],

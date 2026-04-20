@@ -1,5 +1,5 @@
 """
-ROLLON AR v37.3 - A&R Operating System (Airtable parity rebuild)
+ROLLON AR v37.4 - A&R Operating System (Airtable parity rebuild)
 Google Sheets master. No external dependencies.
 """
 
@@ -937,6 +937,43 @@ def run_directory_automations(ri, field, new_value, headers, old_value=''):
             if cc is not None:
                 sheets.update_cell('Personnel', ri, cc + 1, ci['country'])
                 results.append(f"Auto-filled country: {ci['country']}")
+    # v37.4: auto recompute LA + London send times when Set Out Reach Date/Time changes.
+    # Output format DD/MM/YYYY HH:MM:SS matches Mail Merge with Attachments expectations.
+    if ch == 'set out reach date/time':
+        try:
+            city_col = find_col(headers, 'City')
+            country_col = find_col(headers, 'Countries', 'Country')
+            la_col = find_col(headers, 'Date/Time In LA to send email')
+            ldn_col = find_col(headers, 'Date/Time In London to send email')
+            row = sheets.get_row('Personnel', ri)
+            city = str(row[city_col]).strip() if city_col is not None and city_col < len(row) else ''
+            country = str(row[country_col]).strip() if country_col is not None and country_col < len(row) else ''
+            tz = tz_resolve(city, country, CITY_LOOKUP)
+            used_fallback = False
+            if not tz:
+                tz = 'Europe/London'
+                used_fallback = True
+                logging.warning(f'LA recompute fallback: row {ri} city={city!r} country={country!r} using Europe/London')
+            raw = str(new_value or '').strip()
+            if raw and la_col is not None:
+                la_str = tz_to_la(raw, tz)
+                if la_str:
+                    sheets.update_cell('Personnel', ri, la_col + 1, la_str)
+                    results.append(f'LA send time: {la_str}')
+                if ldn_col is not None:
+                    parsed = tz_parse_iso(raw)
+                    if parsed:
+                        ldn_str = tz_to_zone(parsed, tz, 'Europe/London')
+                        if ldn_str:
+                            sheets.update_cell('Personnel', ri, ldn_col + 1, ldn_str)
+                if used_fallback:
+                    results.append('Warning: no timezone match, used Europe/London')
+            elif not raw and la_col is not None:
+                sheets.update_cell('Personnel', ri, la_col + 1, '')
+                if ldn_col is not None:
+                    sheets.update_cell('Personnel', ri, ldn_col + 1, '')
+        except Exception as e:
+            logging.warning(f'auto recompute LA times failed for row {ri}: {e}')
     return results
 
 

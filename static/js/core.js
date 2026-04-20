@@ -285,7 +285,23 @@ function getLinkTable(fieldName){
 }
 const URL_FIELDS=['dropbox link','disco','song url','linkedin/socials','website','url','lyric docs','lyrics docs','lyric doc','legal docs','legal doc','attachment','attachments'];
 const DATE_FIELDS=['written date','release date','recording date','last modified','created',
-  'last outreach','set out reach date/time','admin due date'];
+  'last outreach','admin due date'];
+const DATETIME_FIELDS=['set out reach date/time'];
+// Convert ISO 'YYYY-MM-DDTHH:MM[:SS]' or 'DD/MM/YYYY HH:MM[:SS]' to display 'DD/MM/YYYY HH:MM'
+function _dtToDisplay(v){if(!v)return '';const s=String(v).trim();
+  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);if(m)return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
+  m=s.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/);if(m)return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}`;
+  return s;}
+// Convert stored value to datetime-local input format 'YYYY-MM-DDTHH:MM'
+function _dtToInput(v){if(!v)return '';const s=String(v).trim();
+  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);if(m)return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`;
+  m=s.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/);if(m)return `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}`;
+  m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m)return `${m[1]}-${m[2]}-${m[3]}T11:06`;
+  return '';}
+// Default: tomorrow 11:06 in browser local time, formatted for datetime-local input
+function _dtDefault(){const d=new Date();d.setDate(d.getDate()+1);d.setHours(11,6,0,0);
+  const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;}
 const TAG_FIELDS=['tag','tags'];
 const LONG_FIELDS=['lyrics','bio','outreach notes','label copy','alt pitch','master split','pub credit'];
 const CHECKLIST_FIELDS=['song admin'];
@@ -349,6 +365,8 @@ function fieldType(header){
     };
     if(typeMap[ov])return typeMap[ov];
   }
+  // Set Out Reach Date/Time needs HH:MM, handled before generic date match
+  if(DATETIME_FIELDS.some(d=>h.includes(d)))return 'datetime';
   // Airtable lookup fields [LU] always contain linked record names
   if(h.includes('[lu]'))return 'link';
   // Default detection from field name
@@ -376,6 +394,7 @@ function renderCell(header,value,ri,table){
     case 'tag':return renderTagPills(v);
     case 'url':return renderUrls(v);
     case 'date':return `<span class="cell-date">${esc(v)}</span>`;
+    case 'datetime':return `<span class="cell-date">${esc(_dtToDisplay(v))}</span>`;
     case 'long':return `<span class="cell-text" title="${escA(v)}">${esc(v.length>60?v.substring(0,60)+'...':v)}</span>`;
     case 'contact':return renderContactPill(v);
     case 'id':return `<span class="cell-text" style="font-family:var(--font-m);font-size:10px;color:var(--text-ghost)">${esc(v.substring(0,12))}</span>`;
@@ -580,6 +599,7 @@ function renderDetailValue(val,type){
     case 'tag':return renderTagPills(val);
     case 'url':return renderUrls(val);
     case 'date':return `<span class="cell-date">${esc(val)}</span>`;
+    case 'datetime':return `<span class="cell-date">${esc(_dtToDisplay(val))}</span>`;
     case 'long':return `<span class="cell-text" style="white-space:pre-wrap">${esc(val)}</span>`;
     case 'link':return renderLinkedPillsNav(val);
     case 'contact':return renderContactPill(val);
@@ -920,6 +940,9 @@ function startEdit(el){
   if(type==='date'){
     el.innerHTML=`<input type="date" class="inline-edit">`;
     el.querySelector('.inline-edit').value=currentVal;
+  } else if(type==='datetime'){
+    el.innerHTML=`<input type="datetime-local" class="inline-edit">`;
+    el.querySelector('.inline-edit').value=_dtToInput(currentVal)||_dtDefault();
   } else {
     el.innerHTML=`<input class="inline-edit">`;
     el.querySelector('.inline-edit').value=currentVal;
@@ -927,7 +950,7 @@ function startEdit(el){
   const inp=el.querySelector('.inline-edit');inp.focus();
   // URL prefill: if URL field is empty, seed with http://
   if(type==='url'&&!currentVal){inp.value='http://';inp.setSelectionRange(7,7)}
-  inp.addEventListener('blur',()=>{let v=inp.value;if(type==='url'&&(v==='http://'||v==='https://'))v='';saveEdit(el,field,ri,table,v)});
+  inp.addEventListener('blur',()=>{let v=inp.value;if(type==='url'&&(v==='http://'||v==='https://'))v='';if(type==='datetime'&&v)v=v+':00';saveEdit(el,field,ri,table,v)});
   inp.addEventListener('keydown',e=>{
     if(e.key==='Enter'){e.preventDefault();inp.blur()}
     if(e.key==='Escape'){e.stopPropagation();refreshDetail(ri,table)}
@@ -1640,7 +1663,7 @@ function _isGroupLeader(rec){
 }
 
 // ==================== GRID BUILDER (V2 with inline edit + header dropdowns) ====================
-const _ED_TYPES=['tag','link','autocomplete','field_type','text','date','contact','url','long','duration','number','currency','percent','rating'];
+const _ED_TYPES=['tag','link','autocomplete','field_type','text','date','datetime','contact','url','long','duration','number','currency','percent','rating'];
 function buildGridV2(cid,headers,records,table,visCols,sortField,sortDir,onSort,selRows){
   const c=document.getElementById(cid);if(!c)return;cacheStore(records,table);
   const shown=visCols||headers.map(h=>cleanH(h));
@@ -1771,6 +1794,7 @@ function _gridDoEdit(td,rawH,ri,table,type,val){
   }
   td.dataset.origHtml=td.innerHTML;
   if(type==='date')td.innerHTML='<input type="date" class="inline-edit grid-inline">';
+  else if(type==='datetime')td.innerHTML='<input type="datetime-local" class="inline-edit grid-inline">';
   else if(type==='duration')td.innerHTML='<input class="inline-edit grid-inline" placeholder="00:00:00" style="font-family:var(--font-m)">';
   else if(type==='number')td.innerHTML='<input type="number" class="inline-edit grid-inline" style="font-family:var(--font-m);text-align:right">';
   else if(type==='currency')td.innerHTML='<input class="inline-edit grid-inline" placeholder="0.00" style="font-family:var(--font-m);text-align:right">';
@@ -1784,10 +1808,13 @@ function _gridDoEdit(td,rawH,ri,table,type,val){
     return;
   }
   else td.innerHTML='<input class="inline-edit grid-inline">';
-  const inp=td.querySelector('.inline-edit');inp.value=val;inp.focus();
+  const inp=td.querySelector('.inline-edit');
+  if(type==='datetime')inp.value=_dtToInput(val)||_dtDefault();
+  else inp.value=val;
+  inp.focus();
   // URL prefill: if URL field is empty, seed with http://
   if(type==='url'&&!val){inp.value='http://';inp.setSelectionRange(7,7)}
-  inp.addEventListener('blur',()=>{let v=inp.value;if(type==='url'&&(v==='http://'||v==='https://'))v='';_gridSave(td,rawH,ri,table,v);setTimeout(()=>{if(td)cellSelect(td)},50)});
+  inp.addEventListener('blur',()=>{let v=inp.value;if(type==='url'&&(v==='http://'||v==='https://'))v='';if(type==='datetime'&&v)v=v+':00';_gridSave(td,rawH,ri,table,v);setTimeout(()=>{if(td)cellSelect(td)},50)});
   inp.addEventListener('keydown',e=>{
     if(e.key==='Enter'&&type!=='long'){e.preventDefault();inp.blur();setTimeout(()=>cellMove('down'),80)}
     if(e.key==='Escape'){e.stopPropagation();td.innerHTML=td.dataset.origHtml||'';delete td.dataset.origHtml;cellSelect(td)}
