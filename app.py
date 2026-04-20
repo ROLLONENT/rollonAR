@@ -1,5 +1,5 @@
 """
-ROLLON AR v35.6 - A&R Operating System
+ROLLON AR v35.6.1-filterfix - A&R Operating System
 Google Sheets master. No external dependencies.
 """
 
@@ -450,10 +450,17 @@ def next_system_id():
         return f"RLN-{max_num + 1:05d}"
 
 def apply_filter(rows, col_idx, op, val):
-    vl = val.lower(); result = []
+    vl = val.lower().strip(); result = []
     for ri, r in rows:
-        cell = str(r[col_idx]).lower().strip() if col_idx < len(r) else ''
-        # Split cell into individual pipe-separated values for set-based ops
+        raw = str(r[col_idx]) if col_idx < len(r) else ''
+        # Countries, MGMT Company, Record Label etc. store Airtable record IDs
+        # (recXXX) on disk but the grid shows resolved human-readable names.
+        # Resolve before comparison so UI filter values match what users see.
+        try:
+            resolved = resolver.resolve_value('', raw) if raw else raw
+        except Exception:
+            resolved = raw
+        cell = str(resolved).lower().strip()
         cell_parts = [p.strip() for p in cell.split('|') if p.strip()]
         m = False
         if op == 'contains': m = vl in cell
