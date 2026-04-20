@@ -84,7 +84,10 @@ PERSONNEL_SHEET = 'Personnel'
 WORKS_WITH_COLUMN = 'Works With'
 BACKLINKS_CACHE_COLUMN = 'Backlinks Cache'
 GROUPING_OVERRIDE_COLUMN = 'Grouping Override'
+GROUP_LEADER_COLUMN = 'Group Leader'
 AIRTABLE_ID_COLUMN = 'Airtable ID'
+TAGS_COLUMN = 'Tags'
+DONT_MASS_PITCH_TAG = "Don't Mass Pitch"
 
 _CLEAN_RE = None
 
@@ -106,10 +109,12 @@ class RelationshipsEngine:
 
     def __init__(self, sheets_manager):
         self.sheets = sheets_manager
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._header_cache = {}
         self._id_to_row = {}
         self._id_to_row_ts = 0
+        self._bulk_data = None
+        self._bulk_ts = 0
         self._ID_CACHE_TTL = 120
 
     # ---------- helpers ----------
@@ -130,12 +135,12 @@ class RelationshipsEngine:
         return None
 
     def ensure_columns(self):
-        """Ensure Backlinks Cache and Grouping Override columns exist on Personnel.
-        Returns dict of {column_name: column_index}."""
+        """Ensure Backlinks Cache, Grouping Override, and Group Leader columns
+        exist on Personnel. Returns dict of {column_name: column_index}."""
         headers = list(self._headers())
         added = False
         next_idx = len(headers)
-        needed = [BACKLINKS_CACHE_COLUMN, GROUPING_OVERRIDE_COLUMN]
+        needed = [BACKLINKS_CACHE_COLUMN, GROUPING_OVERRIDE_COLUMN, GROUP_LEADER_COLUMN]
         for name in needed:
             if self._col_idx(name) is None:
                 headers.append(name)
@@ -510,6 +515,87 @@ class RelationshipsEngine:
         ids = [i for i in self._parse_ids(raw) if i != peer_id]
         self.sheets.update_cell(PERSONNEL_SHEET, ri, col + 1, self._format_ids(ids))
         return True
+
+    # ---------- Group Leader ----------
+
+    def get_group_leader(self, personnel_id):
+        """Return the Group Leader Airtable ID for a given personnel row,
+        or '' if not set."""
+        d = self.row_data(personnel_id)
+        if not d:
+            return ''
+        return (d.get(GROUP_LEADER_COLUMN) or '').strip()
+
+    def set_group_leader(self, group_ids, leader_id, auto_tag_secondaries=True):
+        """Mark every member of `group_ids` with Group Leader = leader_id.
+        If `auto_tag_secondaries` is True, append the "Don't Mass Pitch" tag
+        to every non-leader member (idempotent). Returns summary dict."""
+        ids = [str(i).strip() for i in (group_ids or []) if i]
+        leader = str(leader_id or '').strip()
+        if not ids or not leader or leader not in ids:
+            return {'updated': 0, 'tagged': [], 'leader': leader}
+        gl_col = self._col_idx(GROUP_LEADER_COLUMN)
+        tags_col = self._col_idx(TAGS_COLUMN)
+        if gl_col is None:
+            self.ensure_columns()
+            gl_col = self._col_idx(GROUP_LEADER_COLUMN)
+        if gl_col is None:
+            return {'updated': 0, 'tagged': [], 'leader': leader,
+                    'error': 'Group Leader column could not be ensured'}
+        updates = []
+        tagged = []
+        for pid in ids:
+            ri = self.row_for_id(pid)
+            if not ri:
+                continue
+            updates.append((ri, gl_col + 1, leader))
+            if auto_tag_secondaries and pid != leader and tags_col is not None:
+                row = self.sheets.get_row(PERSONNEL_SHEET, ri)
+                cur = row[tags_col] if tags_col < len(row) else ''
+                parts = [t.strip() for t in str(cur).split('|') if t.strip()] if cur else []
+                if DONT_MASS_PITCH_TAG not in parts:
+                    parts.append(DONT_MASS_PITCH_TAG)
+                    updates.append((ri, tags_col + 1, ' | '.join(parts)))
+                    tagged.append(pid)
+        with self._lock:
+            if updates:
+                self.sheets.batch_update_cells(PERSONNEL_SHEET, updates)
+        return {'updated': len({u[0] for u in updates}), 'tagged': tagged, 'leader': leader}
+
+    def clear_group_leader(self, group_ids):
+        """Blank out Group Leader on every member of the group."""
+        ids = [str(i).strip() for i in (group_ids or []) if i]
+        if not ids:
+            return {'cleared': 0}
+        gl_col = self._col_idx(GROUP_LEADER_COLUMN)
+        if gl_col is None:
+            return {'cleared': 0}
+        updates = []
+        for pid in ids:
+            ri = self.row_for_id(pid)
+            if ri:
+                updates.append((ri, gl_col + 1, ''))
+        with self._lock:
+            if updates:
+                self.sheets.batch_update_cells(PERSONNEL_SHEET, updates)
+        return {'cleared': len(updates)}
+
+    def contacts_tagged_dont_mass_pitch(self, personnel_ids):
+        """Return subset of `personnel_ids` that currently carry the
+        Don't Mass Pitch tag. Used by the Mail Merge export filter."""
+        ids = [str(i).strip() for i in (personnel_ids or []) if i]
+        if not ids:
+            return []
+        out = []
+        for pid in ids:
+            d = self.row_data(pid)
+            if not d:
+                continue
+            tags = str(d.get(TAGS_COLUMN) or '')
+            parts = [t.strip() for t in tags.split('|') if t.strip()]
+            if DONT_MASS_PITCH_TAG in parts:
+                out.append(pid)
+        return out
 
     # ---------- search (for typeahead) ----------
 

@@ -1193,6 +1193,78 @@ function _wwAddLink(toId,toName){
     _wwRenderChips();
     const masterRi=modal.dataset.masterRi;
     if(masterRi)refreshDetail(parseInt(masterRi,10),'directory');
+    openGroupLeaderPicker(masterId);
+  });
+}
+
+// Leader-picker (v36 Phase 6.5): after linking two contacts, prompt the
+// Captain to pick which one receives mass pitches. The non-leaders get
+// the "Don't Mass Pitch" tag appended (idempotent on the server).
+function openGroupLeaderPicker(anyMemberId){
+  fetch('/api/relationships/group-leader/'+encodeURIComponent(anyMemberId)).then(r=>r.json()).then(d=>{
+    const groupIds=(d&&d.group_ids)||[];
+    if(groupIds.length<2)return; // solo, nothing to pick
+    const currentLeader=d.leader||'';
+    // Fetch each member's name for the picker
+    Promise.all(groupIds.map(gid=>fetch('/api/relationships/works-with/'+encodeURIComponent(gid)).then(r=>r.json()).then(rec=>{
+      // Fall back: need a display name. Use search-by-id through a quick lookup.
+      return fetch('/api/relationships/search',{method:'POST',headers:_jsonHeaders(),body:JSON.stringify({q:gid.substring(3,6)})}).then(r=>r.json()).then(s=>{
+        const match=(s.results||[]).find(x=>x.id===gid);
+        return {id:gid,name:match?match.name:gid};
+      });
+    }))).then(members=>{
+      _renderLeaderPickerModal(groupIds,members,currentLeader);
+    }).catch(()=>{
+      _renderLeaderPickerModal(groupIds,groupIds.map(id=>({id,name:id})),currentLeader);
+    });
+  });
+}
+
+function _renderLeaderPickerModal(groupIds,members,currentLeader){
+  // Remove any prior modal
+  document.getElementById('leader-picker-modal')?.remove();
+  const picked=currentLeader||(members[0]&&members[0].id)||'';
+  const rows=members.map(m=>(
+    `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;${m.id===picked?'background:rgba(212,168,83,0.12);border:1px solid rgba(212,168,83,0.4)':'border:1px solid var(--border,#2a2a30)'}">
+      <input type="radio" name="group-leader-choice" value="${escA(m.id)}" ${m.id===picked?'checked':''}>
+      <span style="flex:1;color:var(--text,#eaeaea)">${esc(m.name||m.id)}</span>
+      <span style="font-size:10px;color:var(--text-ghost)">${esc(m.id.substring(0,10))}...</span>
+    </label>`
+  )).join('');
+  const wrap=document.createElement('div');
+  wrap.id='leader-picker-modal';wrap.className='modal-overlay';wrap.style.display='flex';
+  wrap.innerHTML=`<div class="modal-content" style="max-width:480px">
+    <div class="modal-header"><h2>Pick Group Leader</h2><button class="modal-close" onclick="document.getElementById('leader-picker-modal').remove()">&times;</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-ghost);font-size:12px;margin:0 0 12px">These ${groupIds.length} contacts are now linked. Pick the Leader (the one who receives mass pitches). The others will be auto-tagged <span style="color:#dc2626">Don't Mass Pitch</span> so bulk exports skip them.</p>
+      <div style="display:flex;flex-direction:column;gap:6px">${rows}</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--text-dim)">
+        <input type="checkbox" id="lp-auto-tag" checked>
+        Tag secondaries with Don't Mass Pitch
+      </label>
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+        <button class="btn" onclick="document.getElementById('leader-picker-modal').remove()">Skip</button>
+        <button class="btn btn-accent" onclick="_saveLeaderPick(${JSON.stringify(groupIds).replace(/"/g,'&quot;')})">Save Leader</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(wrap);
+}
+
+function _saveLeaderPick(groupIds){
+  const picked=document.querySelector('input[name="group-leader-choice"]:checked');
+  if(!picked){toast('Pick a leader first','error');return}
+  const auto=document.getElementById('lp-auto-tag').checked;
+  fetch('/api/relationships/group-leader',{method:'POST',headers:_jsonHeaders(),
+    body:JSON.stringify({group_ids:groupIds,leader_id:picked.value,auto_tag_secondaries:auto})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error,'error');return}
+    toast('Leader set'+(d.tagged&&d.tagged.length?` (tagged ${d.tagged.length})`:''));
+    document.getElementById('leader-picker-modal')?.remove();
+    // Refresh master detail so the new star icon lands in the grid
+    const wwModal=document.getElementById('ww-modal');
+    const masterRi=wwModal&&wwModal.dataset.masterRi;
+    if(masterRi)refreshDetail(parseInt(masterRi,10),'directory');
+    if(typeof D!=='undefined'&&D.reload)D.reload();
   });
 }
 
@@ -1458,9 +1530,85 @@ function setupSearchAutosuggest(inputId,table){
   },200)});
 }
 
-// ---- GLOBAL SEARCH ----
-const gs=document.getElementById('global-search');
-if(gs){let deb;gs.addEventListener('input',()=>{clearTimeout(deb);deb=setTimeout(()=>{const q=gs.value.trim();if(q.length<2)return;navToRecord(q);gs.value=''},800)})}
+// ---- GLOBAL SEARCH (v36 Phase 6.5) ----
+// Topbar search: dropdown of cross-table results via /api/global-search,
+// Cmd+K (or Ctrl+K) focuses the input from any page, Esc clears/closes.
+(function(){
+  const gs=document.getElementById('global-search');
+  if(!gs)return;
+  const wrap=gs.parentElement||gs;
+  wrap.style.position='relative';
+  let dd=document.createElement('div');
+  dd.className='global-search-dropdown';
+  dd.style.cssText='position:absolute;top:100%;right:0;min-width:320px;max-height:380px;overflow-y:auto;background:var(--bg-elev,#1b1b1f);border:1px solid var(--border,#2a2a30);border-radius:8px;margin-top:4px;box-shadow:0 6px 24px rgba(0,0,0,.45);display:none;z-index:1000';
+  wrap.appendChild(dd);
+  let active=-1,results=[],deb;
+  function close(){dd.style.display='none';active=-1}
+  function openRes(r){
+    close();gs.value='';
+    if(r.route==='directory'){window.location.href='/directory?open='+r.row_index}
+    else if(r.route==='songs'){window.location.href='/songs?open='+r.row_index}
+    else{openTableRecord(r.table,r.row_index)}
+  }
+  function render(){
+    if(!results.length){dd.innerHTML='<div style="padding:10px 12px;color:var(--text-ghost);font-size:12px">No matches.</div>';dd.style.display='block';return}
+    dd.innerHTML=results.slice(0,12).map((r,i)=>{
+      const subtitle=r.subtitle||r.table||'';
+      return `<div class="gs-item" data-idx="${i}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border,#2a2a30);${i===active?'background:var(--accent-20,#d4a85322)':''}">
+        <div style="color:var(--text,#eaeaea);font-size:13px">${esc(r.name)}</div>
+        <div style="color:var(--text-ghost);font-size:11px;margin-top:2px">${esc(subtitle)}</div>
+      </div>`;
+    }).join('');
+    dd.querySelectorAll('.gs-item').forEach(it=>{
+      it.addEventListener('mousedown',e=>{e.preventDefault();openRes(results[parseInt(it.dataset.idx,10)])});
+    });
+    dd.style.display='block';
+  }
+  gs.addEventListener('input',()=>{
+    clearTimeout(deb);
+    const q=gs.value.trim();
+    if(q.length<1){close();return}
+    deb=setTimeout(()=>{
+      fetch('/api/global-search?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+        results=d.results||[];active=results.length?0:-1;render();
+      }).catch(()=>{close()});
+    },180);
+  });
+  gs.addEventListener('keydown',e=>{
+    if(dd.style.display!=='block'){
+      if(e.key==='Escape'){gs.blur();return}
+      return;
+    }
+    if(e.key==='ArrowDown'){e.preventDefault();active=Math.min(active+1,results.length-1);render()}
+    else if(e.key==='ArrowUp'){e.preventDefault();active=Math.max(active-1,0);render()}
+    else if(e.key==='Enter'){e.preventDefault();if(active>=0&&results[active])openRes(results[active])}
+    else if(e.key==='Escape'){e.preventDefault();close();gs.value=''}
+  });
+  document.addEventListener('click',e=>{if(!wrap.contains(e.target))close()});
+  // Cmd+K / Ctrl+K focuses the global search from anywhere.
+  document.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+      e.preventDefault();gs.focus();gs.select();
+    }
+  });
+})();
+
+function openTableRecord(table,rowIndex){
+  fetch('/api/table-record/'+encodeURIComponent(table)+'/'+rowIndex).then(r=>r.json()).then(rec=>{
+    if(rec.error){toast(rec.error,'error');return}
+    const title=rec.Name||rec.Title||table+' record';
+    const bodyEl=document.getElementById('modal-body');const titleEl=document.getElementById('modal-title');
+    if(titleEl)titleEl.textContent=title;
+    if(bodyEl){
+      const rows=Object.keys(rec).filter(k=>!k.startsWith('_')).map(k=>{
+        const v=rec[k]; if(v===''||v==null)return '';
+        return `<div style="display:grid;grid-template-columns:160px 1fr;gap:8px;padding:6px 0;border-bottom:1px solid var(--border,#2a2a30)"><div style="color:var(--text-ghost);font-size:11px">${esc(k)}</div><div style="font-size:12px">${esc(String(v))}</div></div>`;
+      }).join('');
+      bodyEl.innerHTML=`<div style="font-size:11px;color:var(--text-ghost);margin-bottom:8px">${esc(table)} · row ${rowIndex}</div>${rows}`;
+    }
+    document.getElementById('detail-modal').style.display='flex';
+  });
+}
 
 // ---- UTILITIES ----
 function splitP(v){if(!v)return [];return String(v).split(/\s*\|\s*/).map(p=>p.trim()).filter(p=>p&&p!=='undefined'&&p!=='null')}
@@ -1477,6 +1625,19 @@ const _cache={records:new Map(),table:null};
 function cacheStore(records,table){_cache.records.clear();_cache.table=table;records.forEach(rec=>{if(rec._row_index)_cache.records.set(rec._row_index,{...rec})})}
 function cacheGet(ri){return _cache.records.get(ri)||null}
 function cacheUpdate(ri,field,value){const rec=_cache.records.get(ri);if(rec){rec[field]=value;_cache.records.set(ri,rec)}}
+
+// v36 Phase 6.5: a row is a "Group Leader" when its Group Leader column
+// value equals its own Airtable ID. Renders a gold star next to Name.
+function _isGroupLeader(rec){
+  if(!rec)return false;
+  let airtableId='',groupLeader='';
+  for(const k of Object.keys(rec)){
+    const kc=cleanH(k).toLowerCase();
+    if(kc==='airtable id')airtableId=String(rec[k]||'').trim();
+    else if(kc==='group leader')groupLeader=String(rec[k]||'').trim();
+  }
+  return airtableId&&groupLeader&&airtableId===groupLeader;
+}
 
 // ==================== GRID BUILDER (V2 with inline edit + header dropdowns) ====================
 const _ED_TYPES=['tag','link','autocomplete','field_type','text','date','contact','url','long','duration','number','currency','percent','rating'];
@@ -1532,8 +1693,14 @@ function buildGridV2(cid,headers,records,table,visCols,sortField,sortDir,onSort,
       }
     }
     html+=`<tr data-ri="${ri}" class="${rowClass}"><td class="check-col"><input type="checkbox" class="row-check" ${sel.has(ri)?'checked':''} onchange="toggleRow(${ri},this.checked)" onclick="event.stopPropagation()"></td><td class="expand-col" onclick="openRecord(${ri},'${table}')" title="Open full record"><span class="expand-icon">↗</span></td>`;
+    const isLeader=table==='directory'&&_isGroupLeader(rec);
     indices.forEach(i=>{const rawH=headers[i],type=fieldType(rawH),isEd=_ED_TYPES.includes(type);
-      html+=`<td data-field="${esc(rawH).replace(/"/g,'&quot;')}" data-ri="${ri}" class="${isEd?'cell-editable':''}" onclick="${isEd?`if(event.target.closest('.pill-link,.pill-x,.pill'))return;event.stopPropagation();cellSelect(this)`:`if(event.target.closest('.pill-link'))return;openRecord(${ri},'${table}')`}" ondblclick="${isEd?`event.stopPropagation();gridEdit(this,'${escA(rawH)}',${ri},'${table}')`:''}">${renderCell(rawH,rec[rawH],ri,table)}</td>`});
+      const cleanName=cleanH(rawH).toLowerCase();
+      let cellHtml=renderCell(rawH,rec[rawH],ri,table);
+      if(isLeader&&cleanName==='name'){
+        cellHtml='<span class="leader-star" title="Group Leader — receives mass pitches for this group" style="color:#d4a853;margin-right:6px;font-size:13px">★</span>'+cellHtml;
+      }
+      html+=`<td data-field="${esc(rawH).replace(/"/g,'&quot;')}" data-ri="${ri}" class="${isEd?'cell-editable':''}" onclick="${isEd?`if(event.target.closest('.pill-link,.pill-x,.pill'))return;event.stopPropagation();cellSelect(this)`:`if(event.target.closest('.pill-link'))return;openRecord(${ri},'${table}')`}" ondblclick="${isEd?`event.stopPropagation();gridEdit(this,'${escA(rawH)}',${ri},'${table}')`:''}">${cellHtml}</td>`});
     html+='</tr>'});
   html+='</tbody></table>';c.innerHTML=html;window._gridSort=onSort||function(){};window._currentTable=table;
   // Apply freeze panes if set

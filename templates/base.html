@@ -46,21 +46,64 @@
   </div>
 </div>
 {% if session.get('csrf_token') %}
+<meta name="csrf-token" content="{{ session.csrf_token }}">
 <script>
-// CSRF protection: auto-inject token on all fetch POST/PUT/DELETE requests
+// CSRF protection: auto-inject token on all fetch POST/PUT/DELETE requests.
+// v36 addendum: on 403 with a CSRF error, auto-refresh the token from the
+// server and retry the request exactly once. This covers the stale-token
+// case where the session was rotated in another tab or after a reload.
 (function(){
-  const _csrfToken='{{ session.csrf_token }}';
+  let _csrfToken='{{ session.csrf_token }}';
   const _origFetch=window.fetch;
-  window.fetch=function(url,opts){
-    opts=opts||{};
+  function setHeader(opts,value){
+    opts.headers=opts.headers||{};
+    if(opts.headers instanceof Headers){opts.headers.set('X-CSRF-Token',value)}
+    else{opts.headers['X-CSRF-Token']=value}
+  }
+  function needsToken(method){
+    return method!=='GET'&&method!=='HEAD'&&method!=='OPTIONS';
+  }
+  async function refreshToken(){
+    try{
+      const r=await _origFetch.call(window,'/api/csrf/refresh',{method:'POST',headers:{'Content-Type':'application/json'}});
+      if(!r.ok)return null;
+      const d=await r.json();
+      if(d&&d.csrf_token){
+        _csrfToken=d.csrf_token;
+        const meta=document.querySelector('meta[name="csrf-token"]');
+        if(meta)meta.content=_csrfToken;
+        return _csrfToken;
+      }
+    }catch(e){/* noop */}
+    return null;
+  }
+  window.fetch=async function(url,opts){
+    opts=Object.assign({},opts||{});
     const method=(opts.method||'GET').toUpperCase();
-    if(method!=='GET'&&method!=='HEAD'&&method!=='OPTIONS'){
-      opts.headers=opts.headers||{};
-      if(opts.headers instanceof Headers){opts.headers.set('X-CSRF-Token',_csrfToken)}
-      else{opts.headers['X-CSRF-Token']=_csrfToken}
+    if(needsToken(method))setHeader(opts,_csrfToken);
+    let resp=await _origFetch.call(this,url,opts);
+    if(resp.status===403&&needsToken(method)&&!opts._csrfRetried){
+      // Peek the body to confirm it's a CSRF failure before retrying.
+      let isCsrf=false;
+      try{
+        const clone=resp.clone();
+        const body=await clone.json();
+        if(body&&typeof body.error==='string'&&body.error.toLowerCase().includes('csrf'))isCsrf=true;
+      }catch(e){/* non-json 403 -> skip retry */}
+      if(isCsrf){
+        const fresh=await refreshToken();
+        if(fresh){
+          const retryOpts=Object.assign({},opts,{_csrfRetried:true});
+          // Rebuild headers since the prior call already mutated them
+          retryOpts.headers=Object.assign({},opts.headers||{});
+          setHeader(retryOpts,fresh);
+          resp=await _origFetch.call(this,url,retryOpts);
+        }
+      }
     }
-    return _origFetch.call(this,url,opts);
+    return resp;
   };
+  window.__csrfGetToken=()=>_csrfToken;
 })();
 </script>
 {% endif %}

@@ -442,6 +442,10 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
               <input type="checkbox" id="mm-group-by" checked style="width:16px;height:16px;cursor:pointer">
               <span>Group by Works With, then Company (MGMT / Label / Publisher)</span>
             </label>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;font-weight:400" title="Include contacts tagged Don't Mass Pitch. Off by default so group secondaries are skipped.">
+              <input type="checkbox" id="mm-include-dmp" style="width:16px;height:16px;cursor:pointer">
+              <span>Include contacts tagged <span style="color:#dc2626">Don't Mass Pitch</span> (override)</span>
+            </label>
             <div style="display:flex;gap:10px;margin-top:14px">
               <div style="flex:1">
                 <label>Send Date</label>
@@ -483,16 +487,20 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     mdSel.addEventListener('change',()=>{tzWrap.style.display=mdSel.value==='fixed'?'block':'none'});
     const refresh=()=>{
       const gb=document.getElementById('mm-group-by');if(!gb)return;
+      const includeDmp=document.getElementById('mm-include-dmp')?.checked||false;
       const el=document.getElementById('mm-preview');if(el)el.textContent='Loading preview...';
       fetch('/api/directory/mail-merge-preview',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({group_by_company:gb.checked,row_indices:selRows,filter_args:fargs})
+        body:JSON.stringify({group_by_company:gb.checked,row_indices:selRows,filter_args:fargs,include_dont_mass_pitch:includeDmp})
       }).then(r=>r.json()).then(d=>{
         const e2=document.getElementById('mm-preview');if(!e2)return;
         if(d.error){e2.textContent='Preview failed: '+d.error;return}
-        e2.innerHTML=`<strong style="color:var(--text)">${d.contact_count}</strong> contacts collapse to <strong style="color:var(--text)">${d.row_count}</strong> pitch rows`;
+        const skip=d.skipped_dont_mass_pitch||0;
+        const skipNote=skip?` <span style="color:#dc2626">(${skip} Don't Mass Pitch skipped)</span>`:'';
+        e2.innerHTML=`<strong style="color:var(--text)">${d.contact_count}</strong> contacts collapse to <strong style="color:var(--text)">${d.row_count}</strong> pitch rows${skipNote}`;
       }).catch(()=>{const e2=document.getElementById('mm-preview');if(e2)e2.textContent='Preview failed'});
     };
     document.getElementById('mm-group-by').addEventListener('change',refresh);
+    document.getElementById('mm-include-dmp').addEventListener('change',refresh);
     refresh();
     setTimeout(()=>document.getElementById('mm-pitch-name')?.focus(),50);
     document.getElementById('mm-create-btn').onclick=()=>{
@@ -505,9 +513,11 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       const fixed_tz=document.getElementById('mm-fixed-tz').value;
       const btn=document.getElementById('mm-create-btn');
       btn.disabled=true;btn.textContent='Creating...';
+      const includeDmp=document.getElementById('mm-include-dmp')?.checked||false;
       fetch('/api/directory/mail-merge-export',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pitch_name:name,group_by_company:gb,row_indices:selRows,
-          filter_args:fargs,send_date,send_time,send_mode:mode,fixed_tz,visible_columns:visibleCols})
+          filter_args:fargs,send_date,send_time,send_mode:mode,fixed_tz,visible_columns:visibleCols,
+          include_dont_mass_pitch:includeDmp})
       }).then(r=>r.json()).then(d=>{
         if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet';return}
         toast('Mail Merge sheet created: '+d.row_count+' rows');

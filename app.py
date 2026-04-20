@@ -279,9 +279,27 @@ def _csrf_check():
             return
     if not session.get('authenticated'):
         return
+    # Refresh endpoint is CSRF-exempt but still requires authentication;
+    # it hands back a fresh token for the client to retry a failed request.
+    if request.path == '/api/csrf/refresh':
+        return
     token = request.headers.get('X-CSRF-Token', '')
     if not token or token != session.get('csrf_token', ''):
         return jsonify({'error': 'CSRF token missing or invalid'}), 403
+
+
+@app.route('/api/csrf/refresh', methods=['POST', 'GET'])
+def api_csrf_refresh():
+    """Return a fresh CSRF token for the authenticated session.
+    Called by the client-side fetch wrapper when a prior request fails
+    with 403 because the token in window was stale (e.g. session was
+    refreshed in another tab). Replies with 401 when the user is logged
+    out so the client can redirect to /login."""
+    if not session.get('authenticated'):
+        return jsonify({'error': 'not authenticated'}), 401
+    import secrets as _secrets
+    session['csrf_token'] = _secrets.token_urlsafe(32)
+    return jsonify({'csrf_token': session['csrf_token']})
 
 
 # ==================== FORMULA INJECTION PROTECTION (Fix 3) ====================
@@ -901,32 +919,34 @@ def api_config():
 
 
 # ==================== SEARCH ====================
-@app.route('/api/search-record')
-@login_required
-def api_search_record():
-    q = request.args.get('q', '').strip()
-    table_filter = request.args.get('table', '').strip()
-    if len(q) < 1: return jsonify({'results': []})
+def _search_records_impl(q, table_filter='', limit=15):
+    """Shared search logic used by /api/search-record and /api/global-search."""
+    if len(q or '') < 1:
+        return []
     ql = q.lower()
     search_tables = [('Personnel','directory'),('Songs','songs'),
         ('MGMT Companies',None),('Record Labels',None),('Publishing Company',None),
         ('Agent',None),('Agency Company',None),('Studios',None),('Cities',None),
         ('Music Sup Company',None)]
     if table_filter:
-        search_tables = [(t,r) for t,r in search_tables if t.lower()==table_filter.lower() or (r and r.lower()==table_filter.lower())]
-    # Two-pass search: starts-with first, then contains
+        tf = table_filter.lower()
+        search_tables = [(t,r) for t,r in search_tables
+                         if t.lower()==tf or (r and r.lower()==tf)]
     starts_results = []; contains_results = []
     for table_name, route in search_tables:
         try:
             data = sheets.get_all_rows(table_name)
-            if not data or len(data) < 2: continue
+            if not data or len(data) < 2:
+                continue
             headers = data[0]; rows = data[1:]
             nc = find_col(headers, 'name', 'title')
-            if nc is None: continue
+            if nc is None:
+                continue
             for i, row in enumerate(rows):
                 if nc < len(row):
                     val = str(row[nc]).strip()
-                    if not val: continue
+                    if not val:
+                        continue
                     vl = val.lower()
                     if vl.startswith(ql) or any(w.startswith(ql) for w in vl.split()):
                         starts_results.append({'name':val,'table':table_name,'row_index':i+2,'route':route})
@@ -937,10 +957,17 @@ def api_search_record():
             continue
     starts_results.sort(key=lambda r: (0 if r['name'].lower().startswith(ql) else 1, r['name'].lower()))
     contains_results.sort(key=lambda r: r['name'].lower())
-    results = starts_results[:15]
-    if len(results) < 15:
-        results.extend(contains_results[:15-len(results)])
-    return jsonify({'results': results})
+    results = starts_results[:limit]
+    if len(results) < limit:
+        results.extend(contains_results[:limit-len(results)])
+    return results
+
+@app.route('/api/search-record')
+@login_required
+def api_search_record():
+    q = request.args.get('q', '').strip()
+    table_filter = request.args.get('table', '').strip()
+    return jsonify({'results': _search_records_impl(q, table_filter)})
 
 @app.route('/api/table-record/<table_name>/<int:row_index>')
 @login_required
@@ -2016,6 +2043,7 @@ def _fetch_mm_contacts(row_indices):
     ac = col('Airtable ID'); nc = col('Name'); ec = col('Email'); cc = col('City')
     mc = col('MGMT Company'); lc = col('Record Label'); pc = col('Publishing Company')
     srt = col('Set Out Reach Date/Time')
+    tc = col('Tags')
     indices = set(int(i) for i in (row_indices or []) if i)
     rows = data[1:]
     out = []
@@ -2028,6 +2056,8 @@ def _fetch_mm_contacts(row_indices):
         if not email:
             continue
         city = g(cc)
+        tag_raw = g(tc)
+        tag_parts = [t.strip() for t in tag_raw.split('|') if t.strip()] if tag_raw else []
         out.append({
             'row_index': idx,
             'airtable_id': g(ac),
@@ -2039,8 +2069,18 @@ def _fetch_mm_contacts(row_indices):
             'publisher': g(pc),
             'set_out_reach': g(srt),
             'timezone': _timezone_for_city(city),
+            'tags': tag_parts,
+            'dont_mass_pitch': "Don't Mass Pitch" in tag_parts,
         })
     return out
+
+def _filter_dont_mass_pitch(contacts, include_dmp):
+    """Remove Don't Mass Pitch tagged contacts unless include_dmp is True.
+    Returns (kept_contacts, skipped_count)."""
+    if include_dmp:
+        return contacts, 0
+    kept = [c for c in contacts if not c.get('dont_mass_pitch')]
+    return kept, len(contacts) - len(kept)
 
 def _group_mm_contacts(contacts, group_by_company):
     """v36: delegates to relationships.group_for_pitch when group_by_company is true.
@@ -2158,9 +2198,15 @@ def _resolve_mm_rows(payload):
 def api_mail_merge_preview():
     payload = request.get_json(silent=True) or {}
     group_by = bool(payload.get('group_by_company', True))
+    include_dmp = bool(payload.get('include_dont_mass_pitch', False))
     contacts = _resolve_mm_rows(payload)
+    contacts, skipped_dmp = _filter_dont_mass_pitch(contacts, include_dmp)
     rows = _group_mm_contacts(contacts, group_by)
-    return jsonify({'contact_count': len(contacts), 'row_count': len(rows)})
+    return jsonify({
+        'contact_count': len(contacts),
+        'row_count': len(rows),
+        'skipped_dont_mass_pitch': skipped_dmp,
+    })
 
 @app.route('/api/directory/mail-merge-export', methods=['POST'])
 @admin_required
@@ -2173,11 +2219,15 @@ def api_mail_merge_export():
     send_mode = (payload.get('send_mode') or 'recipient_local').strip()
     fixed_tz = (payload.get('fixed_tz') or 'Europe/London').strip()
     visible_cols = payload.get('visible_columns') or []
+    include_dmp = bool(payload.get('include_dont_mass_pitch', False))
     if not pitch_name:
         return jsonify({'error': 'Pitch name is required'}), 400
     contacts = _resolve_mm_rows(payload)
     if not contacts:
         return jsonify({'error': 'No contacts with email found in the selection'}), 400
+    contacts, skipped_dmp = _filter_dont_mass_pitch(contacts, include_dmp)
+    if not contacts:
+        return jsonify({'error': 'All contacts in the selection carry the "Don\'t Mass Pitch" tag. Tick "Include Don\'t Mass Pitch contacts" to send to them anyway.'}), 400
     groups = _group_mm_contacts(contacts, group_by)
 
     today = datetime.now().date()
@@ -2263,6 +2313,7 @@ def api_mail_merge_export():
         'title': title,
         'row_count': len(data_rows),
         'contact_count': len(contacts),
+        'skipped_dont_mass_pitch': skipped_dmp,
         'send_date': str(base_date),
         'send_time': f'{hh:02d}:{mm:02d}',
         'send_mode': send_mode,
@@ -2401,6 +2452,95 @@ def api_relationships_lookup(personnel_id):
         return jsonify(relationships.lookup_all_relationships(personnel_id))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/relationships/group-leader/<path:personnel_id>', methods=['GET'])
+@login_required
+def api_relationships_group_leader_get(personnel_id):
+    """Return {'leader': '<recID or empty>', 'group_ids': [...]} for a contact.
+
+    The group is the transitive Works With closure starting from the given
+    contact so the modal can show every member and which one is leader.
+    """
+    try:
+        leader = relationships.get_group_leader(personnel_id)
+        group = relationships.get_group([personnel_id])
+        return jsonify({'leader': leader, 'group_ids': group})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/relationships/group-leader', methods=['POST'])
+@login_required
+def api_relationships_group_leader_set():
+    """Set the Group Leader for a set of contacts.
+
+    Payload:
+      group_ids: [str] Airtable IDs of every group member (required)
+      leader_id: str Airtable ID of the picked leader (must be in group_ids)
+      auto_tag_secondaries: bool - default true. When true, every non-leader
+        member gets the "Don't Mass Pitch" tag so bulk pitches only reach
+        the leader.
+    """
+    d = request.json or {}
+    ids = [str(x).strip() for x in (d.get('group_ids') or []) if x]
+    leader = str(d.get('leader_id') or '').strip()
+    auto_tag = bool(d.get('auto_tag_secondaries', True))
+    if not ids or not leader:
+        return jsonify({'error': 'group_ids and leader_id required'}), 400
+    if leader not in ids:
+        return jsonify({'error': 'leader_id must be one of group_ids'}), 400
+    try:
+        res = relationships.set_group_leader(ids, leader, auto_tag_secondaries=auto_tag)
+        return jsonify({'success': True, **res})
+    except Exception as e:
+        logging.warning('set_group_leader failed: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/relationships/group-leader/clear', methods=['POST'])
+@login_required
+def api_relationships_group_leader_clear():
+    d = request.json or {}
+    ids = [str(x).strip() for x in (d.get('group_ids') or []) if x]
+    if not ids:
+        return jsonify({'error': 'group_ids required'}), 400
+    try:
+        res = relationships.clear_group_leader(ids)
+        return jsonify({'success': True, **res})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== GLOBAL SEARCH (v36 Phase 6.5) ====================
+# A thin wrapper around /api/search-record that is intentionally named
+# /api/global-search so the top-bar search UI has a dedicated endpoint
+# and can evolve independently (v36.1 adds live highlight metadata).
+@app.route('/api/global-search', methods=['GET'])
+@login_required
+def api_global_search():
+    """Global cross-table search. Returns {'results': [...], 'q': str}.
+
+    Each result: {name, table, row_index, route, subtitle}. `route` is the
+    page slug (directory/songs) when the record belongs to a grid page;
+    otherwise None (e.g. MGMT Companies), and the client links to a modal
+    via /api/table-record.
+    """
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'results': [], 'q': q})
+    try:
+        results = _search_records_impl(q, limit=15)
+        for r in results:
+            if r.get('table') == 'Personnel':
+                r['route'] = r.get('route') or 'directory'
+            elif r.get('table') == 'Songs':
+                r['route'] = r.get('route') or 'songs'
+            r['subtitle'] = r.get('table', '')
+        return jsonify({'results': results, 'q': q})
+    except Exception as e:
+        logging.warning('global-search failed: %s', e)
+        return jsonify({'error': str(e), 'results': []}), 500
 
 def _recompute_la_times(row_indices=None):
     """Internal helper: recompute [Use] Date Time LA to Send Email + London
@@ -5012,7 +5152,7 @@ if __name__ == '__main__':
     try: build_name_cache()
     except Exception as e: print(f"  Warning: {e}")
 
-    print("Ensuring v36 relationship columns (Backlinks Cache, Grouping Override)...")
+    print("Ensuring v36 relationship columns (Backlinks Cache, Grouping Override, Group Leader)...")
     try:
         added = relationships.ensure_columns()
         print(f"  Columns: {added}")
