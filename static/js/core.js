@@ -3111,45 +3111,122 @@ function useCurrentTemplate(){
 }
 
 // ==================== FEATURE: ACTIVITY TIMELINE ====================
+// v37.6 Response Intelligence: structured Outreach Events timeline.
+// The Personnel "Outreach Events" JSON column holds the authoritative log.
+// Legacy free-text "Outreach Notes" and Last Outreach date still render as
+// fallback markers when the structured log is empty. The Log Response
+// button (+ LogResponse.render) appends new events via the append API.
+const OUTREACH_WARMTH_COLORS={
+  hot:'#d4a853',warm:'#f59e0b',warming:'#f59e0b',cold:'#6b7280',
+  dead:'#3f3f46',established:'#10b981'
+};
+const OUTREACH_EVENT_LABELS={
+  pitch_sent:'Pitch sent',reply_received:'Reply received',meeting:'Meeting booked',
+  note:'Note',cooldown_skipped:'Cooldown skipped',ghosted:'Ghosted',
+  warm_follow_up:'Warm follow-up',declined:'Declined',introduced:'Introduced us'
+};
 function renderActivityTimeline(record,headers){
-  const events=[];
-  // Pull from date fields with context
+  const ri=record._row_index;
   const outreachH=headers.find(h=>cleanH(h).toLowerCase().includes('last outreach'));
-  const notesH=headers.find(h=>cleanH(h).toLowerCase().includes('outreach notes'));
-  const createdH=headers.find(h=>cleanH(h).toLowerCase()==='created');
-  const modifiedH=headers.find(h=>cleanH(h).toLowerCase()==='last modified');
-  const tagsH=headers.find(h=>cleanH(h).toLowerCase()==='tags'||cleanH(h).toLowerCase()==='tag');
-
-  if(createdH&&record[createdH])events.push({date:record[createdH],type:'created',text:'Record created'});
-  if(outreachH&&record[outreachH])events.push({date:record[outreachH],type:'outreach',text:'Last outreach logged'});
-  if(modifiedH&&record[modifiedH])events.push({date:record[modifiedH],type:'modified',text:'Record modified'});
-
-  // Parse outreach notes for dated entries (common format: "MM/DD/YY text" or "**MM/DD/YY** text")
-  if(notesH&&record[notesH]){
-    const notes=record[notesH]||'';
-    const datePattern=/(?:\*\*)?(\d{1,2}\/\d{1,2}\/\d{2,4})(?:\*\*)?\s*[-:]?\s*(.*)/g;
-    let match;
-    while((match=datePattern.exec(notes))!==null){
-      events.push({date:match[1],type:'note',text:match[2].substring(0,120)||(match[2]||'Note')});
-    }
-  }
-
-  // Sort newest first
-  events.sort((a,b)=>{
-    const da=new Date(a.date),db=new Date(b.date);
-    return (isNaN(db)?0:db)-(isNaN(da)?0:da);
-  });
-
-  if(!events.length)return '<div style="color:var(--text-ghost);font-size:12px;padding:8px">No activity history yet.</div>';
-
-  const icons={created:'🆕',outreach:'📧',modified:'✏️',note:'📝'};
-  let html='<div class="activity-timeline">';
-  events.forEach(ev=>{
-    html+=`<div class="timeline-event"><span class="timeline-icon">${icons[ev.type]||'•'}</span><span class="timeline-date">${esc(ev.date)}</span><span class="timeline-text">${esc(ev.text)}</span></div>`;
-  });
-  html+='</div>';
-  return html;
+  const legacy=[];
+  if(outreachH&&record[outreachH])legacy.push({date:record[outreachH],type:'outreach',text:'Last outreach (legacy date column)'});
+  const legacyHtml=legacy.length?legacy.map(ev=>`<div class="timeline-event" style="opacity:.7"><span class="timeline-icon">&#128231;</span><span class="timeline-date">${esc(ev.date)}</span><span class="timeline-text">${esc(ev.text)}</span></div>`).join(''):'';
+  const hdr=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <div style="font-size:11px;color:var(--text-ghost);letter-spacing:1px;text-transform:uppercase">Response timeline</div>
+    <button class="btn btn-sm btn-accent" onclick="LogResponse.open(${ri})">+ Log Response</button>
+  </div>`;
+  const body=`<div id="outreach-events-body-${ri}" style="font-size:12px;color:var(--text-ghost)">Loading events...</div>`;
+  setTimeout(()=>LogResponse.load(ri),10);
+  return `<div class="outreach-timeline-wrap">${hdr}${body}${legacyHtml?'<div class="outreach-legacy" style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border)">'+legacyHtml+'</div>':''}</div>`;
 }
+
+const LogResponse={
+  _tagCache:null,
+  _fetchTags(){
+    if(this._tagCache)return Promise.resolve(this._tagCache);
+    return fetch('/api/tag-library').then(r=>r.json()).then(d=>{this._tagCache=(d.tags||[]);return this._tagCache}).catch(()=>[]);
+  },
+  load(ri){
+    fetch(`/api/personnel/${ri}/outreach-events`).then(r=>r.json()).then(d=>{
+      const body=document.getElementById(`outreach-events-body-${ri}`);
+      if(!body)return;
+      const events=(d.events||[]).slice().sort((a,b)=>(new Date(b.ts||0))-(new Date(a.ts||0)));
+      if(!events.length){body.innerHTML='<div style="padding:8px 0">No structured events yet. Click "+ Log Response" to add the first one.</div>';return}
+      body.innerHTML=events.map(ev=>LogResponse._card(ev)).join('');
+    }).catch(()=>{const body=document.getElementById(`outreach-events-body-${ri}`);if(body)body.innerHTML='<div style="color:var(--danger);padding:8px 0">Failed to load events.</div>'});
+  },
+  _card(ev){
+    const warmth=(ev.warmth||'').toLowerCase();
+    const color=OUTREACH_WARMTH_COLORS[warmth]||'var(--border)';
+    const label=OUTREACH_EVENT_LABELS[ev.event_type]||ev.event_type||'Event';
+    const ts=ev.ts?new Date(ev.ts).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    const tags=(ev.tags_added||[]).map(t=>`<span class="pill pill-tag" style="font-size:9px;margin-right:4px">${esc(t)}</span>`).join('');
+    const pitchPill=ev.pitch_id?`<span class="pill" style="font-size:9px;background:rgba(139,92,246,.15);color:#c4b5fd;border:1px solid rgba(139,92,246,.4);margin-left:6px">${esc(ev.pitch_id)}</span>`:'';
+    const auto=ev.auto_generated?`<span class="pill" style="font-size:9px;background:rgba(34,197,94,.12);color:#86efac;border:1px solid rgba(34,197,94,.4);margin-left:6px">auto</span>`:'';
+    const warmthPill=warmth?`<span class="pill" style="font-size:9px;background:${color}22;color:${color};border:1px solid ${color}55;margin-left:6px">${esc(warmth)}</span>`:'';
+    return `<div class="outreach-card" style="border-left:3px solid ${color};background:var(--bg-surface);border:1px solid var(--border);border-left-width:3px;border-radius:var(--r-md);padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <strong style="font-size:12px;color:var(--text)">${esc(label)}</strong>
+        ${warmthPill}${pitchPill}${auto}
+        <span style="margin-left:auto;font-size:10px;color:var(--text-ghost);font-family:var(--font-m)">${esc(ts)}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);white-space:pre-wrap">${esc(ev.summary||'(no summary)')}</div>
+      ${tags?`<div style="margin-top:6px">${tags}</div>`:''}
+    </div>`;
+  },
+  open(ri){
+    this._fetchTags().then(tags=>{
+      const tagOptions=tags.map(t=>`<option value="${escA(t.tag)}">${esc(t.tag)} [${esc(t.category)}]</option>`).join('');
+      const warmthOptions=['','cold','warming','warm','hot','established'].map(w=>`<option value="${w}">${w||'(no change)'}</option>`).join('');
+      const eventOptions=['note','pitch_sent','reply_received','meeting','cooldown_skipped'].map(e=>`<option value="${e}">${OUTREACH_EVENT_LABELS[e]||e}</option>`).join('');
+      const html=`<div class="prompt-overlay" id="lr-modal">
+        <div class="prompt-box" style="width:520px">
+          <h3>Log Response</h3>
+          <div class="prompt-fields">
+            <label>Event type</label>
+            <select id="lr-event" class="prompt-input">${eventOptions}</select>
+            <label style="margin-top:10px">Summary (max 200 chars)</label>
+            <textarea id="lr-summary" class="prompt-input" maxlength="200" rows="3" placeholder="What did they say? Keep it to 200 chars." style="resize:vertical"></textarea>
+            <label style="margin-top:10px">Warmth</label>
+            <select id="lr-warmth" class="prompt-input">${warmthOptions}</select>
+            <label style="margin-top:10px">Add tags</label>
+            <select id="lr-tags" class="prompt-input" multiple size="5">${tagOptions}</select>
+            <div style="font-size:10px;color:var(--text-ghost);margin-top:4px">Cmd/Ctrl-click to select multiple. Added tags also write to the contact\'s Tags column.</div>
+            <label style="margin-top:10px">Pitch ID (optional)</label>
+            <input id="lr-pitch" class="prompt-input" placeholder="PL-2026-xxx">
+          </div>
+          <div class="prompt-actions">
+            <button class="btn" onclick="document.getElementById('lr-modal')?.remove()">Cancel</button>
+            <button class="btn btn-accent" id="lr-save">Save</button>
+          </div>
+        </div>
+      </div>`;
+      document.body.insertAdjacentHTML('beforeend',html);
+      setTimeout(()=>document.getElementById('lr-summary')?.focus(),50);
+      document.getElementById('lr-save').onclick=()=>{
+        const payload={
+          event_type:document.getElementById('lr-event').value,
+          summary:document.getElementById('lr-summary').value.slice(0,200),
+          warmth:document.getElementById('lr-warmth').value||'',
+          pitch_id:document.getElementById('lr-pitch').value.trim(),
+          tags_added:Array.from(document.getElementById('lr-tags').selectedOptions).map(o=>o.value),
+        };
+        if(!payload.summary){toast('Summary is required','error');return}
+        const btn=document.getElementById('lr-save');btn.disabled=true;btn.textContent='Saving...';
+        fetch(`/api/personnel/${ri}/outreach-events`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+          .then(r=>r.json()).then(d=>{
+            if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Save';return}
+            toast('Event logged');
+            document.getElementById('lr-modal')?.remove();
+            LogResponse.load(ri);
+            if(payload.tags_added&&payload.tags_added.length){
+              fetch(`/api/personnel/${ri}/apply-tags`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tags:payload.tags_added})}).catch(()=>{});
+            }
+          }).catch(()=>{toast('Failed to save event','error');btn.disabled=false;btn.textContent='Save'});
+      };
+    });
+  }
+};
 
 // Deselect cell when clicking outside the grid
 document.addEventListener('click',e=>{

@@ -2462,7 +2462,15 @@ def api_mail_merge_preview():
     payload = request.get_json(silent=True) or {}
     group_by = bool(payload.get('group_by_company', True))
     include_dmp = bool(payload.get('include_dont_mass_pitch', False))
-    cooldown_days = int(payload.get('cooldown_days', 14) or 0)
+    # v37.6: fall back to persisted default from Settings sheet when the
+    # client omits cooldown_days (e.g. API callers that haven't been updated).
+    if 'cooldown_days' in payload and payload.get('cooldown_days') is not None:
+        cooldown_days = int(payload.get('cooldown_days') or 0)
+    else:
+        try:
+            cooldown_days = int(settings_get('cooldown_days', '14') or '14')
+        except Exception:
+            cooldown_days = 14
     contacts = _resolve_mm_rows(payload)
     contacts, skipped_dmp = _filter_dont_mass_pitch(contacts, include_dmp)
     conflicts = _compute_cooldown_conflicts(contacts, cooldown_days)
@@ -3426,6 +3434,44 @@ def api_outreach_events_append(row_index):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/personnel/<int:row_index>/apply-tags', methods=['POST'])
+@login_required
+def api_personnel_apply_tags(row_index):
+    """v37.6: Append tags to the Personnel Tags column. Idempotent: existing
+    tags are preserved, duplicates ignored. Pipe-separated (space-pipe-space)
+    matches the repo-wide convention."""
+    d = request.json or {}
+    new_tags = [t.strip() for t in (d.get('tags') or []) if t and t.strip()]
+    if not new_tags:
+        return jsonify({'error': 'tags list required'}), 400
+    try:
+        headers = sheets.get_headers('Personnel')
+        tc = None
+        for i, h in enumerate(headers):
+            if cleanH(h).lower() in ('tags', 'tag'):
+                tc = i
+                break
+        if tc is None:
+            return jsonify({'error': 'Tags column missing'}), 400
+        row = sheets.get_row('Personnel', row_index)
+        current = str(row[tc]).strip() if tc < len(row) else ''
+        existing = [t.strip() for t in current.split('|') if t.strip()] if current else []
+        added = []
+        for t in new_tags:
+            if t not in existing:
+                existing.append(t)
+                added.append(t)
+        if not added:
+            return jsonify({'success': True, 'added': [], 'current': existing})
+        new_val = ' | '.join(existing)
+        sheets.update_cell('Personnel', row_index, tc + 1, new_val)
+        record_undo('Personnel', row_index, headers[tc], current, new_val)
+        return jsonify({'success': True, 'added': added, 'current': existing})
+    except Exception as e:
+        logging.warning('apply-tags failed: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 # ==================== V37 TAG LIBRARY ====================
 # Categorised tag vocabulary stored in a "Tag Library" sheet tab. Columns
 # are Category, Tag, Color, Description. Categories used by the app:
@@ -3520,6 +3566,459 @@ def api_tag_library_append():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== V37.6 SETTINGS STORE ====================
+# Small key-value store backed by a "Settings" sheet tab (Key, Value). Used
+# for persistable operator defaults like the cooldown threshold, ghost
+# window, and Gmail polling cadence. Falls back to defaults when the sheet
+# is absent so the app still boots cleanly.
+
+SETTINGS_SHEET = 'Settings'
+SETTINGS_HEADERS = ['Key', 'Value']
+SETTINGS_DEFAULTS = {
+    'cooldown_days': '14',
+    'ghost_days': '14',
+    'gmail_poll_minutes': '15',
+}
+
+def _ensure_settings_tab():
+    try:
+        existing = sheets.get_all_rows(SETTINGS_SHEET)
+        if existing:
+            return
+    except Exception:
+        pass
+    try:
+        sheets._retry(lambda: sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': SETTINGS_SHEET}}}]}
+        ).execute())
+    except Exception as e:
+        logging.info('Settings tab may already exist: %s', e)
+    seed = [list(SETTINGS_HEADERS)] + [[k, v] for k, v in SETTINGS_DEFAULTS.items()]
+    try:
+        sheets._retry(lambda: sheets.service.spreadsheets().values().update(
+            spreadsheetId=sheets.spreadsheet_id,
+            range=f"'{SETTINGS_SHEET}'!A1",
+            valueInputOption='USER_ENTERED',
+            body={'values': seed}
+        ).execute())
+        sheets._invalidate_cache(SETTINGS_SHEET)
+    except Exception as e:
+        logging.warning('Settings seed write failed: %s', e)
+
+def settings_get(key, default=None):
+    try:
+        _ensure_settings_tab()
+        data = sheets.get_all_rows(SETTINGS_SHEET) or []
+        for r in data[1:]:
+            if len(r) >= 2 and str(r[0]).strip().lower() == key.lower():
+                return str(r[1]).strip()
+    except Exception as e:
+        logging.warning('settings_get failed: %s', e)
+    if default is not None:
+        return default
+    return SETTINGS_DEFAULTS.get(key, '')
+
+def settings_set(key, value):
+    _ensure_settings_tab()
+    data = sheets.get_all_rows(SETTINGS_SHEET) or []
+    for i, r in enumerate(data[1:], start=2):
+        if len(r) >= 1 and str(r[0]).strip().lower() == key.lower():
+            sheets.update_cell(SETTINGS_SHEET, i, 2, str(value))
+            return
+    sheets.batch_append(SETTINGS_SHEET, [[key, str(value)]])
+
+@app.route('/api/settings/store', methods=['GET'])
+@login_required
+def api_settings_store_get():
+    keys = request.args.get('keys', '').split(',') if request.args.get('keys') else list(SETTINGS_DEFAULTS.keys())
+    out = {}
+    for k in keys:
+        k = k.strip()
+        if not k:
+            continue
+        out[k] = settings_get(k)
+    return jsonify({'settings': out})
+
+@app.route('/api/settings/store', methods=['POST'])
+@admin_required
+def api_settings_store_set():
+    d = request.json or {}
+    try:
+        for k, v in d.items():
+            if k and v is not None:
+                settings_set(k, v)
+        return jsonify({'success': True, 'updated': list(d.keys())})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== V37.6 GMAIL READ-ONLY INTEGRATION ====================
+# Read-only Gmail polling. Separate OAuth token (token_gmail.json) so Sheets
+# auth stays untouched. When credentials are present, a 15-minute background
+# loop scans replies from Personnel emails and appends outreach-events.
+# Nightly ghost detection marks contacts with no reply past the threshold.
+
+GMAIL_TOKEN_PATH = os.path.join(os.path.dirname(__file__), 'token_gmail.json')
+GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+_GMAIL_STATE = {
+    'last_sync': None,
+    'last_error': None,
+    'matches_found': 0,
+    'running': False,
+}
+_GMAIL_LOCK = threading.Lock()
+
+def gmail_is_connected():
+    return os.path.exists(GMAIL_TOKEN_PATH)
+
+def _gmail_creds():
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as _Req
+    if not os.path.exists(GMAIL_TOKEN_PATH):
+        return None
+    creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_PATH, GMAIL_SCOPES)
+    if creds and not creds.valid and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(_Req())
+            with open(GMAIL_TOKEN_PATH, 'w') as f:
+                f.write(creds.to_json())
+        except Exception as e:
+            logging.warning('gmail token refresh failed: %s', e)
+    return creds
+
+def _gmail_service():
+    from googleapiclient.discovery import build as _gbuild
+    creds = _gmail_creds()
+    if not creds:
+        return None
+    return _gbuild('gmail', 'v1', credentials=creds)
+
+def _infer_event_from_reply(body_text):
+    """v37.6: map reply body heuristics to (event_type, warmth, extra_tag).
+    Celina can override any of these via the Log Response button."""
+    b = (body_text or '').lower()
+    declined_hits = ('not interested', 'not a fit', 'unfortunately', 'pass on this', 'will pass', 'not able to')
+    intro_hits = ('will forward', 'passing to', 'will connect you', 'introducing you', 'introduce you')
+    warm_hits = ('yes', "love to", "let's", 'sounds good', 'happy to', 'book a', 'schedule', 'chat')
+    if any(h in b for h in declined_hits):
+        return ('declined', 'cold', 'Passed')
+    if any(h in b for h in intro_hits):
+        return ('introduced', 'warm', 'Introduced Us')
+    if any(h in b for h in warm_hits):
+        return ('warm_follow_up', 'warm', 'Replied')
+    return ('reply_received', 'warming', 'Replied')
+
+def _build_personnel_email_index():
+    """Returns {lower_email: (row_index, name)} for every Personnel row."""
+    out = {}
+    try:
+        data = sheets.get_all_rows('Personnel') or []
+        if not data:
+            return out
+        hdrs = data[0]
+        ec = None
+        nc = None
+        for i, h in enumerate(hdrs):
+            hl = cleanH(h).lower()
+            if hl == 'email':
+                ec = i
+            elif hl == 'name':
+                nc = i
+        if ec is None:
+            return out
+        for idx, r in enumerate(data[1:], start=2):
+            raw = str(r[ec]).strip().lower() if ec < len(r) else ''
+            if not raw:
+                continue
+            name = str(r[nc]).strip() if nc is not None and nc < len(r) else ''
+            for token in raw.replace(',', ' ').replace('|', ' ').split():
+                if '@' in token:
+                    out[token] = (idx, name)
+    except Exception as e:
+        logging.warning('personnel email index failed: %s', e)
+    return out
+
+def _update_last_response_date(row_index, iso_date):
+    try:
+        headers = sheets.get_headers('Personnel')
+        col = None
+        for i, h in enumerate(headers):
+            if cleanH(h).lower() in ('last response', 'last response date'):
+                col = i
+                break
+        if col is None:
+            col = _ensure_personnel_column('Last Response Date')
+            headers = sheets.get_headers('Personnel')
+        sheets.update_cell('Personnel', row_index, col + 1, iso_date)
+    except Exception as e:
+        logging.info('last response write failed: %s', e)
+
+def _append_outreach_event(row_index, entry):
+    """Internal helper mirroring the POST /outreach-events logic so background
+    jobs can append without going through the HTTP stack."""
+    col_idx = _ensure_personnel_column(OUTREACH_EVENTS_COLUMN)
+    row = sheets.get_row('Personnel', row_index)
+    raw = row[col_idx] if col_idx < len(row) else ''
+    try:
+        events = json.loads(raw) if raw else []
+        if not isinstance(events, list):
+            events = []
+    except Exception:
+        events = []
+    events.append(entry)
+    sheets.update_cell('Personnel', row_index, col_idx + 1, json.dumps(events, separators=(',', ':')))
+
+def gmail_sync_once(days=7):
+    """Scan last N days of inbox for replies from Personnel contacts and
+    append matched outreach events. Safe to call when disconnected — returns
+    a disconnected status in that case."""
+    if not gmail_is_connected():
+        return {'connected': False}
+    with _GMAIL_LOCK:
+        if _GMAIL_STATE['running']:
+            return {'connected': True, 'skipped': 'already running'}
+        _GMAIL_STATE['running'] = True
+    matches = 0
+    errors = []
+    try:
+        svc = _gmail_service()
+        if not svc:
+            return {'connected': False}
+        idx = _build_personnel_email_index()
+        if not idx:
+            _GMAIL_STATE['last_sync'] = datetime.utcnow().isoformat() + 'Z'
+            _GMAIL_STATE['matches_found'] = 0
+            return {'connected': True, 'matches': 0, 'note': 'empty personnel index'}
+        since = (datetime.now() - timedelta(days=max(1, int(days)))).strftime('%Y/%m/%d')
+        q = f'newer_than:{max(1, int(days))}d -from:me'
+        results = svc.users().messages().list(userId='me', q=q, maxResults=500).execute()
+        msgs = results.get('messages', [])
+        seen_threads = set()
+        for m in msgs[:200]:
+            try:
+                msg = svc.users().messages().get(userId='me', id=m['id'], format='metadata',
+                    metadataHeaders=['From', 'Subject', 'Date']).execute()
+                thread_id = msg.get('threadId', '')
+                if thread_id in seen_threads:
+                    continue
+                seen_threads.add(thread_id)
+                hdrs = {h['name'].lower(): h['value'] for h in msg.get('payload', {}).get('headers', [])}
+                from_hdr = hdrs.get('from', '')
+                subject = hdrs.get('subject', '')
+                email_match = re.search(r'[\w.+-]+@[\w.-]+\.[\w.-]+', from_hdr)
+                if not email_match:
+                    continue
+                sender = email_match.group(0).lower()
+                if sender not in idx:
+                    continue
+                row_index, contact_name = idx[sender]
+                snippet = msg.get('snippet', '')[:200]
+                etype, warmth, extra_tag = _infer_event_from_reply(snippet + ' ' + subject)
+                ts = datetime.utcnow().isoformat() + 'Z'
+                entry = {
+                    'ts': ts,
+                    'event_type': etype,
+                    'summary': (snippet or subject or 'Reply received')[:200],
+                    'warmth': warmth,
+                    'auto_generated': True,
+                    'tags_added': ['Responded', extra_tag] if extra_tag != 'Replied' else ['Responded'],
+                    'thread_id': thread_id,
+                    'subject': subject[:120],
+                }
+                _append_outreach_event(row_index, entry)
+                try:
+                    _apply_tags_backend(row_index, entry['tags_added'])
+                except Exception:
+                    pass
+                try:
+                    _update_last_response_date(row_index, datetime.now().date().isoformat())
+                except Exception:
+                    pass
+                matches += 1
+            except Exception as e:
+                errors.append(str(e))
+                continue
+        _GMAIL_STATE['last_sync'] = datetime.utcnow().isoformat() + 'Z'
+        _GMAIL_STATE['matches_found'] = matches
+        _GMAIL_STATE['last_error'] = errors[0] if errors else None
+        return {'connected': True, 'matches': matches, 'errors': len(errors), 'since': since}
+    except Exception as e:
+        _GMAIL_STATE['last_error'] = str(e)
+        logging.warning('gmail sync failed: %s', e)
+        return {'connected': True, 'error': str(e)}
+    finally:
+        with _GMAIL_LOCK:
+            _GMAIL_STATE['running'] = False
+
+def _apply_tags_backend(row_index, tags):
+    headers = sheets.get_headers('Personnel')
+    tc = None
+    for i, h in enumerate(headers):
+        if cleanH(h).lower() in ('tags', 'tag'):
+            tc = i
+            break
+    if tc is None:
+        return
+    row = sheets.get_row('Personnel', row_index)
+    current = str(row[tc]).strip() if tc < len(row) else ''
+    existing = [t.strip() for t in current.split('|') if t.strip()] if current else []
+    changed = False
+    for t in tags:
+        if t and t not in existing:
+            existing.append(t)
+            changed = True
+    if changed:
+        sheets.update_cell('Personnel', row_index, tc + 1, ' | '.join(existing))
+
+def _gmail_poll_loop():
+    """Background loop. Sleeps `gmail_poll_minutes` between runs. Exits
+    silently on error so the Flask process is never taken down."""
+    while True:
+        try:
+            minutes = int(settings_get('gmail_poll_minutes', '15') or '15')
+        except Exception:
+            minutes = 15
+        if minutes < 5:
+            minutes = 5
+        try:
+            if gmail_is_connected():
+                gmail_sync_once(days=2)
+        except Exception as e:
+            logging.warning('gmail poll loop error: %s', e)
+        time.sleep(max(60, minutes * 60))
+
+def ghost_detection_scan():
+    """Nightly: contacts with Last Outreach older than `ghost_days` and no
+    Reply event in the outreach log get a `ghosted` event + Ghosted tag."""
+    try:
+        ghost_days = int(settings_get('ghost_days', '14') or '14')
+    except Exception:
+        ghost_days = 14
+    if ghost_days <= 0:
+        return {'ghosted': 0, 'skipped': 'disabled'}
+    today = datetime.now().date()
+    ghosted = 0
+    try:
+        data = sheets.get_all_rows('Personnel') or []
+        if not data:
+            return {'ghosted': 0}
+        hdrs = data[0]
+        def colf(name):
+            for i, h in enumerate(hdrs):
+                if cleanH(h).lower() == name.lower():
+                    return i
+            return None
+        last_col = colf('Last Outreach')
+        events_col = colf(OUTREACH_EVENTS_COLUMN)
+        if last_col is None:
+            return {'ghosted': 0, 'skipped': 'no Last Outreach column'}
+        for idx, r in enumerate(data[1:], start=2):
+            raw = str(r[last_col]).strip() if last_col < len(r) else ''
+            if not raw:
+                continue
+            lo = _parse_dt(raw)
+            if not lo:
+                continue
+            delta = (today - lo).days
+            if delta < ghost_days:
+                continue
+            events = []
+            if events_col is not None and events_col < len(r):
+                try:
+                    events = json.loads(r[events_col]) if r[events_col] else []
+                except Exception:
+                    events = []
+            has_reply = any((e.get('event_type') or '') in ('reply_received', 'warm_follow_up', 'declined', 'introduced') for e in events)
+            has_ghost_already = any((e.get('event_type') or '') == 'ghosted' for e in events)
+            if has_reply or has_ghost_already:
+                continue
+            try:
+                _append_outreach_event(idx, {
+                    'ts': datetime.utcnow().isoformat() + 'Z',
+                    'event_type': 'ghosted',
+                    'summary': f'No reply {delta} days after last outreach ({raw}).',
+                    'warmth': 'cold',
+                    'auto_generated': True,
+                    'tags_added': ['Ghosted'],
+                })
+                _apply_tags_backend(idx, ['Ghosted'])
+                ghosted += 1
+            except Exception as e:
+                logging.info('ghost write failed row %s: %s', idx, e)
+    except Exception as e:
+        logging.warning('ghost detection failed: %s', e)
+        return {'ghosted': ghosted, 'error': str(e)}
+    return {'ghosted': ghosted, 'threshold_days': ghost_days}
+
+def _ghost_nightly_loop():
+    """Sleep until ~03:00 local, run once, repeat."""
+    while True:
+        try:
+            now = datetime.now()
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            sleep_s = max(60, int((target - now).total_seconds()))
+            time.sleep(sleep_s)
+            ghost_detection_scan()
+        except Exception as e:
+            logging.warning('ghost nightly loop error: %s', e)
+            time.sleep(3600)
+
+@app.route('/api/gmail/status', methods=['GET'])
+@admin_required
+def api_gmail_status():
+    return jsonify({
+        'connected': gmail_is_connected(),
+        'last_sync': _GMAIL_STATE.get('last_sync'),
+        'last_error': _GMAIL_STATE.get('last_error'),
+        'matches_found': _GMAIL_STATE.get('matches_found', 0),
+        'running': _GMAIL_STATE.get('running', False),
+        'scopes': GMAIL_SCOPES,
+    })
+
+@app.route('/api/gmail/connect', methods=['POST'])
+@admin_required
+def api_gmail_connect():
+    """Kick off local-server OAuth flow. Requires the operator to be at the
+    machine so the consent window can be dismissed. Uses the same client
+    credentials.json as the Sheets flow but writes to token_gmail.json so
+    Sheets auth stays intact."""
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, GMAIL_SCOPES)
+        creds = flow.run_local_server(port=0, open_browser=True)
+        with open(GMAIL_TOKEN_PATH, 'w') as f:
+            f.write(creds.to_json())
+        return jsonify({'success': True, 'connected': True})
+    except Exception as e:
+        logging.warning('gmail connect failed: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/gmail/disconnect', methods=['POST'])
+@admin_required
+def api_gmail_disconnect():
+    try:
+        if os.path.exists(GMAIL_TOKEN_PATH):
+            os.remove(GMAIL_TOKEN_PATH)
+        return jsonify({'success': True, 'connected': False})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/gmail/sync-now', methods=['POST'])
+@admin_required
+def api_gmail_sync_now():
+    days = int((request.json or {}).get('days', 2) or 2)
+    result = gmail_sync_once(days=days)
+    return jsonify(result)
+
+@app.route('/api/gmail/ghost-scan', methods=['POST'])
+@admin_required
+def api_gmail_ghost_scan():
+    return jsonify(ghost_detection_scan())
+
+
 # ==================== V37 PITCH INTELLIGENCE DASHBOARD ====================
 # 10 metrics computed on demand from the live Personnel + Pitch Log + Songs
 # sheets. Not cached beyond the existing 120s sheets cache.
@@ -3551,6 +4050,8 @@ def api_pitch_intelligence():
         field_col = p_col('Field')
         country_col = p_col('Countries')
         group_leader_col = p_col('Group Leader')
+        events_col = p_col(OUTREACH_EVENTS_COLUMN)
+        name_col = p_col('Name')
 
         total_contacts = len(p_rows)
         recently_pitched = 0  # within window_days
@@ -3559,6 +4060,12 @@ def api_pitch_intelligence():
         field_counts = {}
         country_counts = {}
         warmth_counts = {w: 0 for w in VALID_WARMTHS}
+        # v37.6 response-intelligence roll-ups driven by Outreach Events log
+        response_counts = {}   # contact_name -> reply/warm/meeting event count
+        ghost_counts = {}      # contact_name -> ghost event count
+        recent_meetings = []   # up to 20 newest meetings in window
+        country_reply_counts = {}  # country -> reply events within window
+        country_pitch_counts = {}  # country -> pitch-sent events within window
         for r in p_rows:
             # Last Outreach
             if last_col is not None and last_col < len(r):
@@ -3595,6 +4102,52 @@ def api_pitch_intelligence():
                     except Exception:
                         cv_resolved = cv
                     country_counts[cv_resolved or cv] = country_counts.get(cv_resolved or cv, 0) + 1
+            # Outreach Events aggregation for responders / ghosters / meetings
+            if events_col is not None and events_col < len(r):
+                raw_events = r[events_col]
+                if raw_events:
+                    try:
+                        evs = json.loads(raw_events)
+                    except Exception:
+                        evs = []
+                    if isinstance(evs, list):
+                        contact_name = str(r[name_col]).strip() if name_col is not None and name_col < len(r) else ''
+                        country_key = None
+                        if country_col is not None and country_col < len(r):
+                            cv2 = str(r[country_col]).strip()
+                            if cv2:
+                                try:
+                                    country_key = resolver.resolve_value('', cv2) or cv2
+                                except Exception:
+                                    country_key = cv2
+                        for e in evs:
+                            et = (e.get('event_type') or '').lower()
+                            ts_raw = e.get('ts') or ''
+                            ed = None
+                            if ts_raw:
+                                try:
+                                    ed = datetime.fromisoformat(ts_raw.replace('Z', '+00:00')).date()
+                                except Exception:
+                                    ed = None
+                            in_window = ed is not None and (today - ed).days <= window_days
+                            if et in ('reply_received', 'warm_follow_up', 'introduced'):
+                                if contact_name:
+                                    response_counts[contact_name] = response_counts.get(contact_name, 0) + 1
+                                if in_window and country_key:
+                                    country_reply_counts[country_key] = country_reply_counts.get(country_key, 0) + 1
+                            elif et == 'ghosted':
+                                if contact_name:
+                                    ghost_counts[contact_name] = ghost_counts.get(contact_name, 0) + 1
+                            elif et == 'meeting':
+                                if in_window:
+                                    recent_meetings.append({
+                                        'name': contact_name,
+                                        'date': ts_raw[:10] if ts_raw else '',
+                                        'summary': (e.get('summary') or '')[:120],
+                                    })
+                            elif et == 'pitch_sent':
+                                if in_window and country_key:
+                                    country_pitch_counts[country_key] = country_pitch_counts.get(country_key, 0) + 1
 
         # Pitch Log summary
         try:
@@ -3613,9 +4166,20 @@ def api_pitch_intelligence():
 
         top_fields = sorted(field_counts.items(), key=lambda x: -x[1])[:5]
         top_countries = sorted(country_counts.items(), key=lambda x: -x[1])[:5]
+        top_responders = sorted(response_counts.items(), key=lambda x: -x[1])[:10]
+        top_ghosters = sorted(ghost_counts.items(), key=lambda x: -x[1])[:10]
+        recent_meetings_sorted = sorted(recent_meetings, key=lambda m: m.get('date', ''), reverse=True)[:10]
+        # Territory heatmap: reply rate per country (replies / pitches) when we have both
+        heatmap = []
+        for country, pitches in sorted(country_pitch_counts.items(), key=lambda x: -x[1])[:10]:
+            replies = country_reply_counts.get(country, 0)
+            rate = round(replies / pitches, 3) if pitches else 0
+            heatmap.append({'country': country, 'pitches': pitches, 'replies': replies, 'reply_rate': rate})
+        total_events_logged = sum(response_counts.values()) + sum(ghost_counts.values()) + len(recent_meetings)
         return jsonify({
             'window_days': window_days,
             'as_of': today.isoformat(),
+            'insufficient_data': total_pitches < 10,
             'metrics': {
                 'total_contacts': total_contacts,
                 'recently_pitched': recently_pitched,
@@ -3627,6 +4191,11 @@ def api_pitch_intelligence():
                 'top_fields': [{'name': n, 'count': c} for n, c in top_fields],
                 'top_countries': [{'name': n, 'count': c} for n, c in top_countries],
                 'coverage_ratio': round(recently_pitched / total_contacts, 3) if total_contacts else 0,
+                'top_responders': [{'name': n, 'count': c} for n, c in top_responders],
+                'top_ghosters': [{'name': n, 'count': c} for n, c in top_ghosters],
+                'recent_meetings': recent_meetings_sorted,
+                'territory_heatmap': heatmap,
+                'total_events_logged': total_events_logged,
             },
         })
     except Exception as e:
@@ -3638,6 +4207,167 @@ def api_pitch_intelligence():
 @admin_required
 def page_pitch_intelligence():
     return render_template('pitch_intelligence.html')
+
+
+@app.route('/api/pitch/suggestions', methods=['GET'])
+@admin_required
+def api_pitch_suggestions():
+    """v37.6: compact suggestions derived from Outreach Events + Pitch Log.
+    Unlike /api/pitch-intelligence (dashboard), this is scoped to what a
+    Captain needs while drafting a new pitch: top responders to re-engage,
+    subject lines that historically converted, and a best-timing pattern."""
+    try:
+        # Responders from Outreach Events
+        data = sheets.get_all_rows('Personnel') or []
+        hdrs = data[0] if data else []
+        def _c(name):
+            for i, h in enumerate(hdrs):
+                if cleanH(h).lower() == name.lower():
+                    return i
+            return None
+        name_c = _c('Name')
+        events_c = _c(OUTREACH_EVENTS_COLUMN)
+        responders = {}
+        if name_c is not None and events_c is not None:
+            for r in data[1:]:
+                nm = str(r[name_c]).strip() if name_c < len(r) else ''
+                raw = r[events_c] if events_c < len(r) else ''
+                if not nm or not raw:
+                    continue
+                try:
+                    evs = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(evs, list):
+                    continue
+                for e in evs:
+                    if (e.get('event_type') or '') in ('reply_received', 'warm_follow_up', 'introduced'):
+                        responders[nm] = responders.get(nm, 0) + 1
+        top_responders = [{'name': n, 'count': c} for n, c in
+                          sorted(responders.items(), key=lambda x: -x[1])[:5]]
+
+        # Subject lines (from Pitch Log, matched against response events
+        # aggregated by pitch_id when present).
+        top_subjects = []
+        try:
+            pl = sheets.get_all_rows('Pitch Log') or []
+            pl_hdrs = pl[0] if pl else []
+            # Map: Pitch Log columns vary; look for Subject and Pitch Type/Round
+            subj_col = None
+            type_col = None
+            for i, h in enumerate(pl_hdrs):
+                if cleanH(h).lower() in ('subject', 'subject line', 'pitch name', 'pitch type'):
+                    subj_col = subj_col if subj_col is not None else i
+                if cleanH(h).lower() == 'pitch type':
+                    type_col = i
+            subject_stats = {}
+            for r in pl[1:]:
+                if subj_col is None or subj_col >= len(r):
+                    continue
+                subj = str(r[subj_col]).strip()
+                if not subj:
+                    continue
+                subject_stats.setdefault(subj, {'pitches': 0, 'replies': 0})
+                subject_stats[subj]['pitches'] += 1
+            # Reply counts per subject come from events with matching pitch_id
+            pitch_id_col = None
+            for i, h in enumerate(pl_hdrs):
+                if cleanH(h).lower() in ('pitch id', 'id'):
+                    pitch_id_col = i
+                    break
+            pitch_id_to_subject = {}
+            if pitch_id_col is not None and subj_col is not None:
+                for r in pl[1:]:
+                    if pitch_id_col < len(r) and subj_col < len(r):
+                        pid = str(r[pitch_id_col]).strip()
+                        sub = str(r[subj_col]).strip()
+                        if pid and sub:
+                            pitch_id_to_subject[pid] = sub
+            if events_c is not None and pitch_id_to_subject:
+                for r in data[1:]:
+                    raw = r[events_c] if events_c < len(r) else ''
+                    if not raw:
+                        continue
+                    try:
+                        evs = json.loads(raw)
+                    except Exception:
+                        continue
+                    for e in evs:
+                        pid = (e.get('pitch_id') or '').strip()
+                        if pid and pid in pitch_id_to_subject:
+                            sub = pitch_id_to_subject[pid]
+                            if sub in subject_stats and (e.get('event_type') or '') in (
+                                'reply_received', 'warm_follow_up', 'introduced'):
+                                subject_stats[sub]['replies'] += 1
+            subj_list = []
+            for sub, st in subject_stats.items():
+                if st['pitches'] >= 2:
+                    subj_list.append({
+                        'subject': sub,
+                        'pitches': st['pitches'],
+                        'replies': st['replies'],
+                        'reply_rate': round(st['replies'] / st['pitches'], 3) if st['pitches'] else 0,
+                    })
+            subj_list.sort(key=lambda x: (-x['reply_rate'], -x['pitches']))
+            top_subjects = subj_list[:3]
+        except Exception as e:
+            logging.info('pitch suggestions subject calc failed: %s', e)
+
+        # Best timing: aggregate reply events by hour-of-day
+        best_timing = None
+        try:
+            hour_hits = {}
+            day_hits = {}
+            if events_c is not None:
+                for r in data[1:]:
+                    raw = r[events_c] if events_c < len(r) else ''
+                    if not raw:
+                        continue
+                    try:
+                        evs = json.loads(raw)
+                    except Exception:
+                        continue
+                    for e in evs:
+                        if (e.get('event_type') or '') not in ('reply_received', 'warm_follow_up', 'introduced'):
+                            continue
+                        ts = e.get('ts') or ''
+                        if not ts:
+                            continue
+                        try:
+                            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                        except Exception:
+                            continue
+                        hour_hits[dt.hour] = hour_hits.get(dt.hour, 0) + 1
+                        day_hits[dt.strftime('%A')] = day_hits.get(dt.strftime('%A'), 0) + 1
+            total_samples = sum(hour_hits.values())
+            if total_samples >= 10:
+                best_hour = max(hour_hits.items(), key=lambda x: x[1])[0]
+                best_day = max(day_hits.items(), key=lambda x: x[1])[0]
+                best_timing = {
+                    'hour': f'{best_hour:02d}:00 UTC',
+                    'day': best_day,
+                    'territory': request.args.get('pitch_type', '') or 'global',
+                    'samples': total_samples,
+                }
+        except Exception as e:
+            logging.info('pitch suggestions timing calc failed: %s', e)
+
+        try:
+            cooldown_default = int(settings_get('cooldown_days', '14') or '14')
+        except Exception:
+            cooldown_default = 14
+
+        return jsonify({
+            'suggestions': {
+                'top_responders': top_responders,
+                'top_subjects': top_subjects,
+                'best_timing': best_timing,
+                'cooldown_days': cooldown_default,
+            }
+        })
+    except Exception as e:
+        logging.warning('pitch suggestions failed: %s', e)
+        return jsonify({'error': str(e)}), 500
 
 
 # ==================== GLOBAL SEARCH (v36 Phase 6.5) ====================
@@ -6357,6 +7087,16 @@ if __name__ == '__main__':
     # Start cleanup thread (rate limiter, playlist views, edit tokens)
     cleanup_thread = threading.Thread(target=_cleanup_thread_func, daemon=True)
     cleanup_thread.start()
+
+    # v37.6: Response Intelligence background jobs. Both are no-ops when the
+    # respective preconditions are not met (Gmail disconnected / ghost days
+    # set to 0), so it is always safe to start them.
+    try:
+        threading.Thread(target=_gmail_poll_loop, daemon=True).start()
+        threading.Thread(target=_ghost_nightly_loop, daemon=True).start()
+        print("v37.6 response intelligence loops started (gmail poll + ghost nightly)")
+    except Exception as e:
+        print(f"  Warning (v37.6 loops): {e}")
 
     # Lazy rebuild: if resolver has 0 entries, retry on first request
     @app.before_request

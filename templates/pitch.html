@@ -43,7 +43,9 @@
         <button class="btn btn-accent" onclick="P.generate()">Generate Mail Merge</button>
         <button class="btn" onclick="P.draftEmail()">Preview Email</button>
         <button class="btn" onclick="showTemplateLibrary((tpl)=>{document.getElementById('p-bespoke').value=tpl.body;toast('Template loaded')})">Templates</button>
+        <button class="btn" onclick="P.loadSuggestions()">&#128161; Suggestions</button>
       </div>
+      <div id="p-suggestions" style="margin-top:12px"></div>
       <div id="p-result" style="margin-top:8px"></div>
     </div>
   </div>
@@ -240,7 +242,38 @@ const P={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       playlist_link:document.getElementById('p-link').value})}).then(r=>r.json()).then(d=>{
       if(d.draft){const pre=document.createElement('pre');pre.style.cssText='background:var(--bg);padding:12px;border-radius:var(--r-md);font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto';
         pre.textContent=d.draft;document.getElementById('p-result').innerHTML='';document.getElementById('p-result').appendChild(pre)
-      }})}
+      }})},
+
+  // v37.6 Smart Suggestions: derived from Outreach Events + Pitch Log. Empty
+  // panels render explicit empty states so the operator knows WHY a section
+  // is blank (not enough pitches, no responders yet, etc).
+  loadSuggestions(){
+    const el=document.getElementById('p-suggestions');
+    el.innerHTML='<div style="color:var(--text-ghost);font-size:12px">Loading suggestions...</div>';
+    fetch('/api/pitch/suggestions?pitch_type='+encodeURIComponent(this.currentView||'')).then(r=>r.json()).then(d=>{
+      if(d.error){el.innerHTML='<div style="color:var(--danger)">'+esc(d.error)+'</div>';return}
+      const s=d.suggestions||{};
+      const resp=(s.top_responders||[]).map(c=>`<li style="font-size:12px;padding:2px 0"><strong>${esc(c.name)}</strong> <span style="color:var(--text-ghost)">&middot; ${c.count} replies</span></li>`).join('');
+      const subj=(s.top_subjects||[]).map(su=>`<li style="font-size:12px;padding:2px 0"><span style="color:var(--accent)">${esc(su.subject)}</span> <span style="color:var(--text-ghost)">&middot; ${su.pitches} pitches, ${Math.round((su.reply_rate||0)*100)}% reply rate</span></li>`).join('');
+      const timing=s.best_timing?`<div style="font-size:12px">Your <strong>${esc(s.best_timing.territory||'global')}</strong> pitches perform best at <strong>${esc(s.best_timing.hour||'?')}</strong> on <strong>${esc(s.best_timing.day||'?')}</strong> <span style="color:var(--text-ghost)">(${s.best_timing.samples||0} samples)</span>.</div>`:'<div style="font-size:12px;color:var(--text-ghost)">Not enough pitch history to surface a timing pattern yet.</div>';
+      const cooldown=s.cooldown_active?`<div style="font-size:11px;color:#fca5a5;margin-top:6px">&#9888; ${s.cooldown_active} contacts in your current filter were pitched within the last ${s.cooldown_days||14} days.</div>`:'';
+      el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
+        <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px">
+          <div style="font-size:10px;color:var(--text-ghost);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Top responders (all-time)</div>
+          <ul style="padding-left:16px;margin:0">${resp||'<li style="color:var(--text-ghost);font-size:12px">Log replies via Directory &gt; Log Response to populate this list.</li>'}</ul>
+        </div>
+        <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px">
+          <div style="font-size:10px;color:var(--text-ghost);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Best subject lines</div>
+          <ul style="padding-left:16px;margin:0">${subj||'<li style="color:var(--text-ghost);font-size:12px">No pitches logged with matched replies yet.</li>'}</ul>
+        </div>
+        <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px">
+          <div style="font-size:10px;color:var(--text-ghost);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Timing</div>
+          ${timing}
+          ${cooldown}
+        </div>
+      </div>`;
+    }).catch(()=>{el.innerHTML='<div style="color:var(--danger)">Failed to load suggestions.</div>'});
+  }
 };
 
 function filterPitchGroupDD(){

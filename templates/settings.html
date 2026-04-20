@@ -49,6 +49,41 @@
     <p style="font-size:10px;color:var(--text-ghost);margin-top:4px">Keys are saved to .env file on the server. Restart app after saving.</p>
   </div>
   <div class="settings-section">
+    <h3>Response Intelligence Defaults</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Persisted in the Settings sheet tab. Drives the Mail Merge cooldown warning, the Gmail inbox poll cadence, and the nightly ghost-detection scan.</p>
+    <div id="ri-settings-status" style="font-size:11px;color:var(--text-ghost);margin-bottom:8px">Loading...</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:640px">
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Cooldown days</label><input id="ri-cooldown" type="number" min="0" max="365" class="prompt-input" title="Warn when exporting if any contact was pitched within N days"></div>
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Ghost threshold (days)</label><input id="ri-ghost" type="number" min="0" max="365" class="prompt-input" title="Nightly job tags contacts as Ghosted after N days with no reply"></div>
+      <div><label style="font-size:11px;color:var(--text-muted);display:block">Gmail poll (minutes)</label><input id="ri-gmail-poll" type="number" min="5" max="180" class="prompt-input" title="How often the reply matcher scans new Gmail replies"></div>
+    </div>
+    <button class="btn btn-accent" onclick="saveRISettings()" style="margin-top:8px">Save defaults</button>
+    <button class="btn" onclick="runGhostScan()" style="margin-top:8px">Run ghost scan now</button>
+  </div>
+  <div class="settings-section">
+    <h3>Integrations &middot; Gmail (read-only)</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Grants ROLLON AR <code>gmail.readonly</code> access so replies to your pitches auto-append Outreach Events. ROLLON AR never sends mail. Token is stored at <code>token_gmail.json</code> (gitignored).</p>
+    <div id="gmail-status" style="font-size:12px;margin-bottom:8px;padding:8px 10px;background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--r-md)">Checking...</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-accent" onclick="gmailConnect()">Connect Gmail</button>
+      <button class="btn" onclick="gmailSyncNow()">Sync Now</button>
+      <button class="btn btn-danger" onclick="gmailDisconnect()">Disconnect</button>
+    </div>
+    <p style="font-size:10px;color:var(--text-ghost);margin-top:8px">Privacy: ROLLON AR stores only {sender email, timestamp, thread ID, matched pitch ID, inferred event type, warmth, 200-char summary}. No full email body is saved.</p>
+  </div>
+  <div class="settings-section">
+    <h3>Tag Library</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">The canonical list of tags across ROLLON AR. Used in the Log Response button, Directory chips, and Pitch Intelligence warmth breakdown. Categories: Warmth, Status, Relationship, Fit, Timing (free-form).</p>
+    <div id="tag-library-list" style="margin-bottom:10px"></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:6px;max-width:820px">
+      <input id="tl-category" class="prompt-input" placeholder="Category (e.g. Warmth)">
+      <input id="tl-tag" class="prompt-input" placeholder="Tag name">
+      <input id="tl-color" class="prompt-input" placeholder="#d4a853" value="#d4a853">
+      <input id="tl-desc" class="prompt-input" placeholder="Short description">
+      <button class="btn btn-accent" onclick="addTag()">+ Add</button>
+    </div>
+  </div>
+  <div class="settings-section">
     <h3>Clear Saved Views</h3>
     <button class="btn btn-danger" onclick="clearViews()">Clear All Views</button>
   </div>
@@ -187,5 +222,111 @@ function checkDuplicates(){
 }
 
 fetch('/api/tables').then(r=>r.json()).then(d=>{document.getElementById('tables-list').innerHTML=(d.tables||[]).map(t=>'<span class="pill">'+t+'</span>').join(' ')});
+
+// ---------- v37.6 Response Intelligence settings ----------
+function loadRISettings(){
+  fetch('/api/settings/store?keys=cooldown_days,ghost_days,gmail_poll_minutes').then(r=>r.json()).then(d=>{
+    const s=d.settings||{};
+    document.getElementById('ri-cooldown').value=s.cooldown_days||'14';
+    document.getElementById('ri-ghost').value=s.ghost_days||'14';
+    document.getElementById('ri-gmail-poll').value=s.gmail_poll_minutes||'15';
+    document.getElementById('ri-settings-status').textContent='Loaded from Settings sheet.';
+  });
+}
+function saveRISettings(){
+  const payload={
+    cooldown_days:document.getElementById('ri-cooldown').value||'14',
+    ghost_days:document.getElementById('ri-ghost').value||'14',
+    gmail_poll_minutes:document.getElementById('ri-gmail-poll').value||'15',
+  };
+  fetch('/api/settings/store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){toast('Saved');document.getElementById('ri-settings-status').textContent='Saved '+new Date().toLocaleTimeString()}
+      else toast(d.error||'Save failed','error');
+    });
+}
+function runGhostScan(){
+  const btn=event.target;btn.disabled=true;btn.textContent='Scanning...';
+  fetch('/api/gmail/ghost-scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(d=>{
+      if(d.error)toast(d.error,'error');
+      else toast('Ghost scan complete: '+(d.ghosted||0)+' tagged');
+    }).finally(()=>{btn.disabled=false;btn.textContent='Run ghost scan now'});
+}
+loadRISettings();
+
+// ---------- Gmail integration ----------
+function refreshGmailStatus(){
+  fetch('/api/gmail/status').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('gmail-status');
+    if(!el)return;
+    if(d.connected){
+      const last=d.last_sync?('last sync '+new Date(d.last_sync).toLocaleString()):'never synced';
+      const err=d.last_error?'<div style="color:var(--danger);margin-top:4px">'+esc(d.last_error)+'</div>':'';
+      el.innerHTML='<span style="color:var(--success);font-weight:600">Connected</span> \u00b7 '+esc(last)+' \u00b7 '+(d.matches_found||0)+' matches last run'+err;
+    } else {
+      el.innerHTML='<span style="color:var(--text-ghost)">Not connected.</span> Click Connect Gmail to start a one-time OAuth flow in your browser.';
+    }
+  });
+}
+function gmailConnect(){
+  const btn=event.target;btn.disabled=true;btn.textContent='Opening OAuth...';
+  fetch('/api/gmail/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){toast('Gmail connected');refreshGmailStatus()}
+      else toast(d.error||'OAuth failed','error');
+    }).finally(()=>{btn.disabled=false;btn.textContent='Connect Gmail'});
+}
+function gmailSyncNow(){
+  const btn=event.target;btn.disabled=true;btn.textContent='Syncing...';
+  fetch('/api/gmail/sync-now',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days:7})})
+    .then(r=>r.json()).then(d=>{
+      if(d.connected===false){toast('Gmail is not connected','error')}
+      else if(d.error){toast(d.error,'error')}
+      else{toast('Matches found: '+(d.matches||0));refreshGmailStatus()}
+    }).finally(()=>{btn.disabled=false;btn.textContent='Sync Now'});
+}
+function gmailDisconnect(){
+  if(!confirm('Disconnect Gmail? Future syncs will pause until you reconnect.'))return;
+  fetch('/api/gmail/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(()=>{toast('Disconnected');refreshGmailStatus()});
+}
+refreshGmailStatus();
+
+// ---------- Tag Library editor ----------
+function loadTagLibrary(){
+  fetch('/api/tag-library').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('tag-library-list');if(!el)return;
+    const tags=d.tags||[];
+    if(!tags.length){el.innerHTML='<div style="color:var(--text-ghost);font-size:11px">No tags yet.</div>';return}
+    const byCat={};
+    tags.forEach(t=>{(byCat[t.category]=byCat[t.category]||[]).push(t)});
+    let html='';
+    Object.keys(byCat).sort().forEach(cat=>{
+      html+='<div style="margin-bottom:10px"><div style="font-size:10px;color:var(--text-ghost);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">'+esc(cat)+'</div><div style="display:flex;flex-wrap:wrap;gap:4px">';
+      byCat[cat].forEach(t=>{
+        const c=t.color||'#d4a853';
+        html+='<span class="pill" title="'+esc(t.description||'')+'" style="background:'+c+'20;color:'+c+';border:1px solid '+c+'55">'+esc(t.tag)+'</span>';
+      });
+      html+='</div></div>';
+    });
+    el.innerHTML=html;
+  });
+}
+function addTag(){
+  const payload={
+    category:document.getElementById('tl-category').value.trim(),
+    tag:document.getElementById('tl-tag').value.trim(),
+    color:document.getElementById('tl-color').value.trim()||'#d4a853',
+    description:document.getElementById('tl-desc').value.trim(),
+  };
+  if(!payload.category||!payload.tag){toast('Category and Tag required','error');return}
+  fetch('/api/tag-library',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){toast('Tag added');document.getElementById('tl-tag').value='';document.getElementById('tl-desc').value='';loadTagLibrary()}
+      else toast(d.error||'Failed','error');
+    });
+}
+loadTagLibrary();
 </script>
 {% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}ROLLON AR | Pitch Intelligence{% endblock %}
 {% block content %}
-<div class="dashboard" style="max-width:1100px;margin:0 auto;padding:20px">
+<div class="dashboard" style="max-width:1180px;margin:0 auto;padding:20px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
     <h1 style="margin:0;font-size:22px">Pitch Intelligence</h1>
     <div style="display:flex;align-items:center;gap:10px">
@@ -11,7 +11,10 @@
     </div>
   </div>
   <div id="pi-as-of" style="font-size:11px;color:var(--text-ghost);margin-bottom:16px"></div>
-  <div id="pi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:24px"></div>
+  <div id="pi-empty" style="display:none;padding:32px;text-align:center;color:var(--text-ghost);border:1px dashed var(--border);border-radius:var(--r-md);margin-bottom:16px"></div>
+  <div id="pi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px"></div>
+  <div id="pi-warmth" style="margin-bottom:20px"></div>
+  <div id="pi-territory" style="margin-bottom:20px"></div>
   <div id="pi-lists" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px"></div>
 </div>
 <script>
@@ -21,16 +24,67 @@ function metricCard(label, value, accent){
     <div style="font-size:24px;font-weight:600;color:${accent||'var(--accent)'}">${value}</div>
   </div>`;
 }
-function listCard(title, items){
+function listCard(title, items, valueKey){
+  valueKey=valueKey||'count';
   if(!items||!items.length){
     return `<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
       <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">${title}</div>
-      <div style="font-size:11px;color:var(--text-ghost)">No data</div>
+      <div style="font-size:11px;color:var(--text-ghost)">No data yet</div>
     </div>`;
   }
-  const rows=items.map(i=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${i.name}</span><span style="color:var(--accent);font-family:var(--font-m)">${i.count}</span></div>`).join('');
+  const rows=items.map(i=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border-subtle)">
+    <span style="color:var(--text)">${i.name||i.country||''}</span>
+    <span style="color:var(--accent);font-family:var(--font-m)">${i[valueKey]}</span>
+  </div>`).join('');
   return `<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
     <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">${title}</div>
+    ${rows}
+  </div>`;
+}
+function warmthBar(label,count,total,color){
+  const pct=total>0?Math.round((count/total)*100):0;
+  return `<div style="margin-bottom:6px">
+    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+      <span style="color:var(--text)">${label}</span>
+      <span style="color:var(--text-ghost);font-family:var(--font-m)">${count} (${pct}%)</span>
+    </div>
+    <div style="background:var(--bg-deep);border-radius:4px;height:8px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${color};transition:width .3s"></div>
+    </div>
+  </div>`;
+}
+function meetingRow(m){
+  return `<div style="display:flex;gap:10px;padding:6px 0;font-size:12px;border-bottom:1px solid var(--border-subtle)">
+    <span style="font-family:var(--font-m);font-size:10px;color:var(--text-ghost);min-width:80px">${m.date||''}</span>
+    <span style="color:var(--text);font-weight:500">${m.name||'(unknown)'}</span>
+    <span style="color:var(--text-dim);flex:1">${m.summary||''}</span>
+  </div>`;
+}
+function heatmapCard(items){
+  if(!items||!items.length){
+    return `<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
+      <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">Territory heatmap (reply rate)</div>
+      <div style="font-size:11px;color:var(--text-ghost)">Log pitch_sent + reply events to populate this heatmap.</div>
+    </div>`;
+  }
+  const rows=items.map(t=>{
+    const pct=Math.round((t.reply_rate||0)*100);
+    const hue=Math.min(120,Math.max(0,pct*1.2));
+    return `<div style="display:grid;grid-template-columns:140px 60px 60px 1fr 60px;gap:8px;align-items:center;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border-subtle)">
+      <span style="color:var(--text)">${t.country}</span>
+      <span style="font-family:var(--font-m);color:var(--text-ghost)">${t.pitches}p</span>
+      <span style="font-family:var(--font-m);color:var(--text-ghost)">${t.replies}r</span>
+      <div style="background:var(--bg-deep);border-radius:4px;height:8px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:hsl(${hue},70%,50%)"></div>
+      </div>
+      <span style="text-align:right;font-family:var(--font-m);color:var(--accent)">${pct}%</span>
+    </div>`;
+  }).join('');
+  return `<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
+    <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">Territory heatmap (reply rate)</div>
+    <div style="display:grid;grid-template-columns:140px 60px 60px 1fr 60px;gap:8px;padding:4px 0;font-size:10px;color:var(--text-ghost);text-transform:uppercase;border-bottom:1px solid var(--border)">
+      <span>Country</span><span>Pitches</span><span>Replies</span><span>Rate</span><span style="text-align:right">%</span>
+    </div>
     ${rows}
   </div>`;
 }
@@ -38,11 +92,20 @@ function loadPI(){
   const windowDays=document.getElementById('pi-window').value||30;
   const grid=document.getElementById('pi-grid');
   const lists=document.getElementById('pi-lists');
+  const warmthEl=document.getElementById('pi-warmth');
+  const territoryEl=document.getElementById('pi-territory');
+  const emptyEl=document.getElementById('pi-empty');
   grid.innerHTML='<div style="color:var(--text-ghost);font-size:12px">Loading...</div>';
   fetch('/api/pitch-intelligence?window_days='+windowDays).then(r=>r.json()).then(d=>{
     if(d.error){grid.innerHTML='<div style="color:var(--danger)">'+d.error+'</div>';return}
     const m=d.metrics||{};
-    document.getElementById('pi-as-of').textContent='Computed '+d.as_of+' · window '+d.window_days+' days';
+    document.getElementById('pi-as-of').textContent='Computed '+d.as_of+' \u00b7 window '+d.window_days+' days';
+    if(d.insufficient_data){
+      emptyEl.style.display='block';
+      emptyEl.innerHTML='<div style="font-size:14px;margin-bottom:6px;color:var(--text)">Not enough pitches logged yet ('+m.total_pitches_logged+' of 10).</div><div style="font-size:12px">Send more pitches and come back. Response events are still being collected.</div>';
+    } else {
+      emptyEl.style.display='none';
+    }
     grid.innerHTML=[
       metricCard('Total contacts',m.total_contacts),
       metricCard('Recently pitched',m.recently_pitched,'#22c55e'),
@@ -50,13 +113,33 @@ function loadPI(){
       metricCard('Total pitches logged',m.total_pitches_logged),
       metricCard('Group leaders',m.group_leaders,'#d4a853'),
       metricCard("Don't Mass Pitch",m.dont_mass_pitch,'#dc2626'),
-      metricCard('Coverage ratio',(m.coverage_ratio*100).toFixed(1)+'%','#0d9488'),
-      metricCard('Warmth: hot',(m.warmth_breakdown||{}).hot||0,'#ef4444'),
-      metricCard('Warmth: warm',(m.warmth_breakdown||{}).warm||0,'#eab308'),
-      metricCard('Warmth: cold',(m.warmth_breakdown||{}).cold||0,'#6b7280'),
+      metricCard('Coverage ratio',((m.coverage_ratio||0)*100).toFixed(1)+'%','#0d9488'),
+      metricCard('Events logged',m.total_events_logged||0,'#ec4899'),
     ].join('');
-    lists.innerHTML=listCard('Top Fields',m.top_fields)+listCard('Top Countries',m.top_countries);
-  });
+    const wb=m.warmth_breakdown||{};
+    const wbTotal=(wb.hot||0)+(wb.warm||0)+(wb.warming||0)+(wb.cold||0)+(wb.established||0);
+    warmthEl.innerHTML=`<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
+      <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">Warmth distribution</div>
+      ${warmthBar('Hot',wb.hot||0,wbTotal,'#d4a853')}
+      ${warmthBar('Warm',wb.warm||0,wbTotal,'#f59e0b')}
+      ${warmthBar('Warming',wb.warming||0,wbTotal,'#eab308')}
+      ${warmthBar('Cold',wb.cold||0,wbTotal,'#6b7280')}
+      ${warmthBar('Established',wb.established||0,wbTotal,'#10b981')}
+    </div>`;
+    territoryEl.innerHTML=heatmapCard(m.territory_heatmap);
+    const meetingsHtml=(m.recent_meetings&&m.recent_meetings.length)?
+      m.recent_meetings.map(meetingRow).join(''):'<div style="font-size:11px;color:var(--text-ghost)">No meetings booked in this window.</div>';
+    const meetingsCard=`<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
+      <div style="font-size:12px;color:var(--text-ghost);margin-bottom:10px">Recent meetings booked</div>
+      ${meetingsHtml}
+    </div>`;
+    lists.innerHTML=
+      listCard('Top Fields',m.top_fields)+
+      listCard('Top Countries',m.top_countries)+
+      listCard('Top responders',m.top_responders)+
+      listCard('Top ghosters',m.top_ghosters)+
+      meetingsCard;
+  }).catch(()=>{grid.innerHTML='<div style="color:var(--danger)">Failed to load intelligence.</div>'});
 }
 loadPI();
 </script>
