@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}ROLLON AR | Compose Pitch{% endblock %}
+{% block content %}
+<div class="page-layout" style="max-width:1380px;margin:0 auto;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;align-items:start">
+  <div class="page-body" style="min-width:0">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <a href="/pitch" class="btn btn-sm">&#8592; Back to Pitch</a>
+      <h1 id="pc-title" style="margin:0;font-size:20px">Compose Pitch</h1>
+      <span id="pc-score-badge" style="display:none;margin-left:auto"></span>
+    </div>
+    <div id="pc-meta" style="font-size:11px;color:var(--text-ghost);margin-bottom:14px"></div>
+    <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px">
+      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Subject</label>
+      <input type="text" id="pc-subject" class="form-input" style="width:100%;margin-bottom:12px" placeholder="Subject line" oninput="PC.onBodyChange()">
+      <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Email Body</label>
+      <textarea id="pc-body" class="form-input" rows="14" style="width:100%;resize:vertical;font-family:var(--font-m);font-size:13px;line-height:1.5" placeholder="Write your pitch... or click a suggestion to insert." oninput="PC.onBodyChange()"></textarea>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+        <span id="pc-wordcount" style="font-size:11px;color:var(--text-ghost);font-family:var(--font-m)">0 words</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="PC.copyToClipboard()">Copy Subject + Body</button>
+          <button class="btn btn-accent" onclick="PC.sendDraft()">Save Draft to Notes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <aside id="pc-sidebar" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;position:sticky;top:20px;max-height:calc(100vh - 40px);overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-ghost)">Smart Suggestions</div>
+      <button class="btn btn-sm" onclick="PC.loadSuggestions()" title="Refresh">&#8635;</button>
+    </div>
+    <div id="pc-sugg-status" style="font-size:11px;color:var(--text-ghost);margin-bottom:8px">Loading...</div>
+    <div id="pc-sugg-empty" style="display:none;padding:14px;text-align:center;font-size:12px;color:var(--text-ghost);border:1px dashed var(--border);border-radius:var(--r-md)">Send more pitches to unlock suggestions.</div>
+    <div id="pc-sugg-body"></div>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const PC = {
+  contactRow: {{ contact_row | tojson }},
+  contact: null,
+  suggestions: null,
+  bodyDirty: false,
+
+  init(){
+    this.loadContact();
+    this.loadSuggestions();
+  },
+
+  loadContact(){
+    fetch('/api/directory/' + this.contactRow).then(r=>r.json()).then(rec=>{
+      if(rec.error){toast(rec.error,'error');return}
+      this.contact = rec;
+      const name = this._fv(rec, 'name') || ('Contact #' + this.contactRow);
+      const email = this._fv(rec, 'email');
+      const field = this._fv(rec, 'field');
+      const country = this._fv(rec, 'countries') || this._fv(rec, 'country');
+      document.getElementById('pc-title').textContent = 'Compose Pitch · ' + name;
+      const bits = [];
+      if(email) bits.push(esc(email));
+      if(field) bits.push(esc(field.split('|')[0].trim()));
+      if(country) bits.push(esc(country.split('|')[0].trim()));
+      document.getElementById('pc-meta').innerHTML = bits.join(' &middot; ');
+    }).catch(()=>toast('Failed to load contact','error'));
+  },
+
+  _fv(rec, term){
+    for(const k of Object.keys(rec||{})){
+      const c = (typeof cleanH === 'function' ? cleanH(k) : (k||''));
+      if(c.toLowerCase().includes(term.toLowerCase())) return rec[k] || '';
+    }
+    return '';
+  },
+
+  loadSuggestions(){
+    const status = document.getElementById('pc-sugg-status');
+    status.textContent = 'Loading suggestions...';
+    fetch('/api/pitch/suggestions?contact_row=' + this.contactRow).then(r=>r.json()).then(d=>{
+      if(d.error){
+        status.innerHTML = '<span style="color:var(--danger)">' + esc(d.error) + '</span>';
+        return;
+      }
+      this.suggestions = d.suggestions || {};
+      this.render();
+    }).catch(()=>{
+      status.innerHTML = '<span style="color:var(--danger)">Failed to load.</span>';
+    });
+  },
+
+  render(){
+    const s = this.suggestions || {};
+    const status = document.getElementById('pc-sugg-status');
+    const empty = document.getElementById('pc-sugg-empty');
+    const body = document.getElementById('pc-sugg-body');
+    const total = s.total_pitches || 0;
+    const minP = s.min_pitches || 10;
+    status.textContent = total + ' pitches logged';
+
+    // v37.1: contact-level score badge in the header
+    if(s.contact_score && s.contact_score.message){
+      const cs = s.contact_score;
+      const badge = document.getElementById('pc-score-badge');
+      const color = cs.sent > 0 && (cs.replies / cs.sent) >= 0.5 ? '#22c55e' : (cs.sent > 0 && (cs.replies / cs.sent) >= 0.25 ? '#d4a853' : '#6b7280');
+      badge.style.display = 'inline-flex';
+      badge.innerHTML = '<span style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '55;padding:4px 10px;border-radius:999px;font-size:11px">' + esc(cs.message) + '</span>';
+    }
+
+    if(total < minP){
+      empty.style.display = 'block';
+      empty.textContent = 'Send more pitches to unlock suggestions (' + total + ' of ' + minP + ').';
+      body.innerHTML = '';
+      // Still render contact score even with low data
+      if(s.contact_score){
+        body.innerHTML = this._cardContact(s.contact_score);
+      }
+      return;
+    }
+    empty.style.display = 'none';
+
+    let html = '';
+    if(s.contact_score){
+      html += this._cardContact(s.contact_score);
+    }
+    html += this._cardSubjects(s.top_subjects || []);
+    html += this._cardTemplates(s.top_templates || []);
+    html += this._cardTiming(s.best_timing);
+    if(s.length_insight) html += this._cardLength(s.length_insight);
+    html += this._cardResponders(s.top_responders || []);
+    body.innerHTML = html;
+  },
+
+  _wrap(label, inner){
+    return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;margin-bottom:10px">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-ghost);margin-bottom:6px">' + esc(label) + '</div>' +
+      inner +
+      '</div>';
+  },
+
+  _cardContact(cs){
+    return this._wrap('Contact responsiveness',
+      '<div style="font-size:12px;color:var(--text)">' + esc(cs.message) + '</div>'
+    );
+  },
+
+  _cardSubjects(subjects){
+    if(!subjects.length){
+      return this._wrap('Top subject lines',
+        '<div style="font-size:11px;color:var(--text-ghost)">No subjects with reply data yet.</div>');
+    }
+    const rows = subjects.slice(0,3).map(s=>{
+      const pct = Math.round((s.reply_rate || 0) * 100);
+      const safeSub = encodeURIComponent(s.subject);
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-subtle)">' +
+        '<button class="btn btn-sm" style="text-align:left;flex:1;background:transparent;border:none;color:var(--accent);padding:0;cursor:pointer;font-size:12px" title="Click to insert as subject" onclick="PC.insertSubject(decodeURIComponent(\'' + safeSub + '\'))">' + esc(s.subject) + '</button>' +
+        '<span style="font-size:10px;color:var(--text-ghost);font-family:var(--font-m);white-space:nowrap">' + s.pitches + 'p &middot; ' + pct + '%</span>' +
+        '</div>';
+    }).join('');
+    return this._wrap('Top subject lines (click to insert)', rows);
+  },
+
+  _cardTemplates(templates){
+    if(!templates.length){
+      return this._wrap('Top templates',
+        '<div style="font-size:11px;color:var(--text-ghost)">No templates matched against pitch history yet.</div>');
+    }
+    const rows = templates.slice(0,3).map((t,i)=>{
+      const pct = Math.round((t.reply_rate || 0) * 100);
+      window._pcTemplateCache = window._pcTemplateCache || {};
+      window._pcTemplateCache[t.name] = t;
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-subtle)">' +
+        '<button class="btn btn-sm" style="text-align:left;flex:1;background:transparent;border:none;color:var(--accent);padding:0;cursor:pointer;font-size:12px" title="Click to insert template body" onclick="PC.insertTemplate(' + JSON.stringify(t.name).replace(/"/g,'&quot;') + ')">' + esc(t.name) + '</button>' +
+        '<span style="font-size:10px;color:var(--text-ghost);font-family:var(--font-m);white-space:nowrap">' + t.pitches + 'p &middot; ' + pct + '%</span>' +
+        '</div>';
+    }).join('');
+    return this._wrap('Top templates (click to insert)', rows);
+  },
+
+  _cardTiming(t){
+    if(!t){
+      return this._wrap('Timing',
+        '<div style="font-size:11px;color:var(--text-ghost)">Need at least 10 reply events to surface a timing pattern.</div>');
+    }
+    return this._wrap('Timing',
+      '<div style="font-size:12px;color:var(--text)">Your <strong>' + esc(t.territory || 'global') +
+      '</strong> pitches perform best at <strong>' + esc(t.hour || '?') +
+      '</strong> on <strong>' + esc(t.day || '?') + '</strong>.' +
+      ' <span style="color:var(--text-ghost)">(' + (t.samples || 0) + ' samples)</span></div>'
+    );
+  },
+
+  _cardLength(li){
+    return this._wrap('Length insight',
+      '<div style="font-size:12px;color:var(--text)">' + esc(li.message) + '</div>' +
+      '<div style="font-size:10px;color:var(--text-ghost);margin-top:4px">' +
+      'Short: ' + li.short_replies + '/' + li.short_pitches + ' &middot; Long: ' + li.long_replies + '/' + li.long_pitches +
+      '</div>'
+    );
+  },
+
+  _cardResponders(rs){
+    if(!rs.length) return '';
+    const rows = rs.slice(0,5).map(r=>
+      '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px">' +
+      '<span style="color:var(--text)">' + esc(r.name) + '</span>' +
+      '<span style="color:var(--text-ghost);font-family:var(--font-m)">' + r.count + '</span>' +
+      '</div>'
+    ).join('');
+    return this._wrap('Top responders (all-time)', rows);
+  },
+
+  insertSubject(subj){
+    const fld = document.getElementById('pc-subject');
+    fld.value = subj || '';
+    fld.focus();
+    toast('Subject inserted');
+    this.onBodyChange();
+  },
+
+  insertTemplate(name){
+    const tpl = (window._pcTemplateCache || {})[name];
+    if(!tpl){toast('Template not cached', 'error');return}
+    const subjFld = document.getElementById('pc-subject');
+    const bodyFld = document.getElementById('pc-body');
+    if(tpl.subject && !subjFld.value.trim()) subjFld.value = tpl.subject;
+    bodyFld.value = tpl.body || '';
+    toast('Template inserted: ' + name);
+    this.onBodyChange();
+  },
+
+  onBodyChange(){
+    const body = document.getElementById('pc-body').value || '';
+    const wc = body.trim() ? body.trim().split(/\s+/).length : 0;
+    document.getElementById('pc-wordcount').textContent = wc + ' words' + (wc > 120 ? ' (over 120)' : '');
+    this.bodyDirty = true;
+  },
+
+  copyToClipboard(){
+    const subj = document.getElementById('pc-subject').value || '';
+    const body = document.getElementById('pc-body').value || '';
+    const text = (subj ? 'Subject: ' + subj + '\n\n' : '') + body;
+    navigator.clipboard.writeText(text).then(()=>toast('Copied to clipboard')).catch(()=>toast('Copy failed','error'));
+  },
+
+  sendDraft(){
+    const subj = (document.getElementById('pc-subject').value || '').trim();
+    const body = (document.getElementById('pc-body').value || '').trim();
+    if(!body){toast('Body is empty','error');return}
+    const summary = (subj ? '[' + subj.slice(0,60) + '] ' : '') + body.slice(0, 140);
+    fetch('/api/personnel/' + this.contactRow + '/outreach-events',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({event_type:'note', summary: summary.slice(0,200)})
+    }).then(r=>r.json()).then(d=>{
+      if(d.error){toast(d.error,'error');return}
+      toast('Draft saved to outreach events');
+    }).catch(()=>toast('Save failed','error'));
+  }
+};
+
+// esc() and toast() are provided by core.js (loaded in base.html). Defined as
+// fallbacks only if core.js failed to load.
+if(typeof esc !== 'function'){window.esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}}
+if(typeof toast !== 'function'){window.toast=function(msg){console.log('[toast]',msg)}}
+
+PC.init();
+</script>
+{% endblock %}

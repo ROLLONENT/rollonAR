@@ -4357,12 +4357,231 @@ def api_pitch_suggestions():
         except Exception:
             cooldown_default = 14
 
+        # v37.1: Top templates by reply rate. Templates are matched against
+        # Pitch Log via Pitch Type. Each template's pitches/replies are summed
+        # across all log rows whose Pitch Type contains the template name.
+        top_templates = []
+        templates_full = {}
+        try:
+            tdata = sheets.get_all_rows('Templates') or []
+            t_hdrs = tdata[0] if tdata else []
+            def _tc(name):
+                for i, h in enumerate(t_hdrs):
+                    if cleanH(h).lower() == name.lower():
+                        return i
+                return None
+            tname_c = _tc('Name')
+            tsubj_c = _tc('Subject')
+            tbody_c = _tc('Body')
+            ttype_c = _tc('Type')
+            for r in tdata[1:]:
+                if tname_c is None or tname_c >= len(r):
+                    continue
+                nm = str(r[tname_c]).strip()
+                if not nm:
+                    continue
+                templates_full[nm] = {
+                    'name': nm,
+                    'subject': str(r[tsubj_c]).strip() if tsubj_c is not None and tsubj_c < len(r) else '',
+                    'body': str(r[tbody_c]).strip() if tbody_c is not None and tbody_c < len(r) else '',
+                    'type': str(r[ttype_c]).strip() if ttype_c is not None and ttype_c < len(r) else '',
+                }
+            # Reuse pl/pl_hdrs from subject scan when available
+            try:
+                pl_for_t = pl
+                pl_hdrs_for_t = pl_hdrs
+            except NameError:
+                pl_for_t = sheets.get_all_rows('Pitch Log') or []
+                pl_hdrs_for_t = pl_for_t[0] if pl_for_t else []
+            type_col_t = None
+            for i, h in enumerate(pl_hdrs_for_t):
+                if cleanH(h).lower() == 'pitch type':
+                    type_col_t = i
+                    break
+            tpl_stats = {nm: {'pitches': 0, 'replies': 0} for nm in templates_full}
+            if type_col_t is not None:
+                for r in pl_for_t[1:]:
+                    if type_col_t >= len(r):
+                        continue
+                    pt = str(r[type_col_t]).strip().lower()
+                    if not pt:
+                        continue
+                    for nm in templates_full:
+                        if nm.lower() in pt or pt in nm.lower():
+                            tpl_stats[nm]['pitches'] += 1
+                # Replies: link via pitch_id if present (rare), otherwise via
+                # Pitch Type contains template name on the pitch_id's source row
+                try:
+                    _have_pid_map = bool(pitch_id_to_subject)
+                except NameError:
+                    _have_pid_map = False
+                if events_c is not None and _have_pid_map:
+                    pl_pid_to_type = {}
+                    pid_col_local = None
+                    for i, h in enumerate(pl_hdrs_for_t):
+                        if cleanH(h).lower() in ('pitch id', 'id'):
+                            pid_col_local = i
+                            break
+                    if pid_col_local is not None and type_col_t is not None:
+                        for r in pl_for_t[1:]:
+                            if pid_col_local < len(r) and type_col_t < len(r):
+                                pl_pid_to_type[str(r[pid_col_local]).strip()] = str(r[type_col_t]).strip().lower()
+                    for r in data[1:]:
+                        raw = r[events_c] if events_c < len(r) else ''
+                        if not raw:
+                            continue
+                        try:
+                            evs = json.loads(raw)
+                        except Exception:
+                            continue
+                        for e in evs:
+                            if (e.get('event_type') or '') not in (
+                                'reply_received', 'warm_follow_up', 'introduced'):
+                                continue
+                            pid = (e.get('pitch_id') or '').strip()
+                            pt = pl_pid_to_type.get(pid, '')
+                            if not pt:
+                                continue
+                            for nm in templates_full:
+                                if nm.lower() in pt or pt in nm.lower():
+                                    tpl_stats[nm]['replies'] += 1
+            tpl_list = []
+            for nm, st in tpl_stats.items():
+                if st['pitches'] >= 1:
+                    tpl_list.append({
+                        'name': nm,
+                        'subject': templates_full[nm]['subject'],
+                        'body': templates_full[nm]['body'],
+                        'pitches': st['pitches'],
+                        'replies': st['replies'],
+                        'reply_rate': round(st['replies'] / st['pitches'], 3) if st['pitches'] else 0,
+                    })
+            tpl_list.sort(key=lambda x: (-x['reply_rate'], -x['pitches']))
+            top_templates = tpl_list[:3]
+        except Exception as e:
+            logging.info('pitch suggestions template calc failed: %s', e)
+
+        # v37.1: Length insight. Compare reply rate of templates whose body is
+        # under 120 words vs 120+ words, weighted by pitches sent.
+        length_insight = None
+        try:
+            short_p = short_r = long_p = long_r = 0
+            for t in (top_templates if False else []):
+                pass
+            for nm, info in templates_full.items():
+                stats = next((x for x in (top_templates if False else []) if x['name'] == nm), None)
+                # Use raw stats from tpl_stats for full coverage
+                pitches = tpl_stats.get(nm, {}).get('pitches', 0)
+                replies = tpl_stats.get(nm, {}).get('replies', 0)
+                if pitches < 1:
+                    continue
+                wc = len((info.get('body') or '').split())
+                if wc < 120:
+                    short_p += pitches
+                    short_r += replies
+                else:
+                    long_p += pitches
+                    long_r += replies
+            if short_p >= 1 and long_p >= 1:
+                short_rate = short_r / short_p if short_p else 0
+                long_rate = long_r / long_p if long_p else 0
+                if short_rate > long_rate and long_rate > 0:
+                    pct = round(((short_rate - long_rate) / long_rate) * 100)
+                    length_insight = {
+                        'short_pitches': short_p, 'short_replies': short_r,
+                        'long_pitches': long_p, 'long_replies': long_r,
+                        'message': f'Your under-120-word pitches have {pct}% higher reply rate.',
+                    }
+                elif long_rate > short_rate and short_rate > 0:
+                    pct = round(((long_rate - short_rate) / short_rate) * 100)
+                    length_insight = {
+                        'short_pitches': short_p, 'short_replies': short_r,
+                        'long_pitches': long_p, 'long_replies': long_r,
+                        'message': f'Your 120-word-plus pitches have {pct}% higher reply rate.',
+                    }
+        except Exception as e:
+            logging.info('pitch suggestions length calc failed: %s', e)
+
+        # v37.1: Contact-level responsiveness score. When ?contact_row=N is
+        # passed, count replies vs pitch_sent events on that contact in the
+        # last 365 days. Falls back to lifetime totals when no events fall in
+        # the window.
+        contact_score = None
+        try:
+            contact_row = request.args.get('contact_row')
+            if contact_row:
+                cr = int(contact_row)
+                if cr >= 2 and (cr - 1) < len(data):
+                    crow = data[cr - 1]
+                    cname = str(crow[name_c]).strip() if name_c is not None and name_c < len(crow) else ''
+                    raw = crow[events_c] if events_c is not None and events_c < len(crow) else ''
+                    cevs = []
+                    if raw:
+                        try:
+                            cevs = json.loads(raw)
+                            if not isinstance(cevs, list):
+                                cevs = []
+                        except Exception:
+                            cevs = []
+                    today = datetime.now().date()
+                    sent_year = replies_year = sent_total = replies_total = 0
+                    for e in cevs:
+                        et = (e.get('event_type') or '').lower()
+                        ts = e.get('ts') or ''
+                        ed = None
+                        if ts:
+                            try:
+                                ed = datetime.fromisoformat(ts.replace('Z', '+00:00')).date()
+                            except Exception:
+                                ed = None
+                        in_year = ed is not None and (today - ed).days <= 365
+                        if et == 'pitch_sent':
+                            sent_total += 1
+                            if in_year:
+                                sent_year += 1
+                        elif et in ('reply_received', 'warm_follow_up', 'introduced'):
+                            replies_total += 1
+                            if in_year:
+                                replies_year += 1
+                    use_year = sent_year > 0
+                    sent = sent_year if use_year else sent_total
+                    replies = replies_year if use_year else replies_total
+                    window_label = 'in the last year' if use_year else 'all-time'
+                    if sent > 0:
+                        message = f'{cname} has responded {replies} out of {sent} times {window_label}.'
+                    elif replies > 0:
+                        message = f'{cname} has logged {replies} replies but no pitch_sent events {window_label}.'
+                    else:
+                        message = f'No pitch history logged for {cname} yet.'
+                    contact_score = {
+                        'name': cname,
+                        'row_index': cr,
+                        'sent': sent,
+                        'replies': replies,
+                        'window': window_label,
+                        'message': message,
+                    }
+        except Exception as e:
+            logging.info('pitch suggestions contact score failed: %s', e)
+
+        # Total pitch count drives the empty-state guard on the sidebar.
+        try:
+            _pl_recount = sheets.get_all_rows('Pitch Log') or []
+            total_pitches_ct = max(0, len(_pl_recount) - 1)
+        except Exception:
+            total_pitches_ct = 0
+
         return jsonify({
             'suggestions': {
                 'top_responders': top_responders,
                 'top_subjects': top_subjects,
+                'top_templates': top_templates,
+                'length_insight': length_insight,
                 'best_timing': best_timing,
                 'cooldown_days': cooldown_default,
+                'contact_score': contact_score,
+                'total_pitches': total_pitches_ct,
+                'min_pitches': 10,
             }
         })
     except Exception as e:
@@ -5209,6 +5428,13 @@ def api_public_autocomplete(table, field):
 @app.route('/pitch')
 @login_required
 def pitch(): return render_template('pitch.html')
+
+@app.route('/pitch/<int:contact_row>')
+@admin_required
+def pitch_compose(contact_row):
+    """v37.1: Per-contact pitch composer with smart suggestions sidebar.
+    Reuses /api/pitch/suggestions and /api/directory/<row> for data."""
+    return render_template('pitch_compose.html', contact_row=contact_row)
 
 @app.route('/api/pitch/contacts', methods=['POST'])
 @login_required
