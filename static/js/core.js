@@ -1073,18 +1073,140 @@ function createAndLink(field,ri,table,name){
   });
 }
 
-// ---- WORKS WITH (proper multi-entry) ----
+// ---- WORKS WITH (v36: typeahead + chips, bidirectional engine) ----
+// Flow: open a modal for contact ri/masterName. Fetch their existing Works With
+// via /api/relationships/works-with/<airtable_id>, render chips. Show a
+// typeahead input. Pick a match -> call /add. Click chip X -> call /remove.
 function worksWithUI(ri,masterName){
-  showPromptModal('Works With: '+masterName,[
-    {label:'Name to link (search Directory)',placeholder:'Type a name...'}
-  ],(vals)=>{
-    if(!vals[0])return;
-    fetch('/api/automate/works-with',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({master_row_index:ri,linked_names:vals[0].split(',').map(s=>s.trim()).filter(Boolean)})
-    }).then(r=>r.json()).then(d=>{
-      if(d.success){toast("Linked! Tagged Don't Mass Pitch, combined emails/names updated.");refreshDetail(ri,'directory')}
-      else toast(d.error||'Failed','error');
+  fetch('/api/directory/'+ri).then(r=>r.json()).then(rec=>{
+    let airtableId='';
+    for(const h of Object.keys(rec)){
+      if(cleanH(h).toLowerCase()==='airtable id'){airtableId=(rec[h]||'').trim();break}
+    }
+    if(!airtableId){toast('This contact has no Airtable ID - cannot link','error');return}
+    _openWorksWithModal(ri,airtableId,masterName);
+  });
+}
+
+function _openWorksWithModal(masterRowIndex,masterId,masterName){
+  let modal=document.getElementById('ww-modal');
+  if(modal)modal.remove();
+  modal=document.createElement('div');
+  modal.id='ww-modal';
+  modal.className='modal';
+  modal.style.display='flex';
+  modal.innerHTML=`
+    <div class="modal-content" style="max-width:560px">
+      <div class="modal-header">
+        <div class="modal-title">Works With: ${esc(masterName)}</div>
+        <span class="modal-close" onclick="document.getElementById('ww-modal').remove()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:11px;color:var(--text-ghost);margin-bottom:10px">
+          Linked contacts share one pitch email. Bidirectional - adding here updates the other side too.
+        </div>
+        <div id="ww-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;min-height:24px"></div>
+        <input id="ww-input" class="typeahead-input" placeholder="Type a name to link..." autocomplete="off" style="width:100%">
+        <div id="ww-dropdown" class="typeahead-dropdown" style="display:none;position:relative;margin-top:4px"></div>
+        <div id="ww-greeting" style="margin-top:14px;padding:10px;background:var(--panel);border-radius:6px;font-size:12px;display:none"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.dataset.masterId=masterId;
+  modal.dataset.masterRi=masterRowIndex;
+  const inp=document.getElementById('ww-input');
+  const dd=document.getElementById('ww-dropdown');
+  let t=null;
+  inp.addEventListener('input',()=>{
+    clearTimeout(t);
+    const q=inp.value.trim();
+    if(q.length<2){dd.style.display='none';return}
+    t=setTimeout(()=>{
+      fetch('/api/relationships/search',{method:'POST',headers:_jsonHeaders(),body:JSON.stringify({q,exclude_id:masterId})})
+      .then(r=>r.json()).then(d=>{
+        const res=d.results||[];
+        if(!res.length){dd.innerHTML='<div class="typeahead-item" style="color:var(--text-ghost)">No matches</div>';dd.style.display='block';return}
+        dd.innerHTML=res.map(r=>
+          `<div class="typeahead-item" onclick="_wwAddLink('${escA(r.id)}','${escA(r.name)}')">${esc(r.name)}`+
+          (r.company?` <span class="table-hint" style="color:var(--text-ghost)">${esc(r.company)}</span>`:'')+
+          (r.field?` <span class="table-hint" style="color:var(--text-ghost);margin-left:8px">${esc(r.field)}</span>`:'')+
+          `</div>`
+        ).join('');
+        dd.style.display='block';
+      });
+    },200);
+  });
+  _wwRenderChips();
+}
+
+function _jsonHeaders(){
+  const h={'Content-Type':'application/json'};
+  const t=document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('csrf_token='));
+  const csrfMeta=document.querySelector('meta[name="csrf-token"]');
+  if(csrfMeta)h['X-CSRF-Token']=csrfMeta.content;
+  return h;
+}
+
+function _wwRenderChips(){
+  const modal=document.getElementById('ww-modal');
+  if(!modal)return;
+  const masterId=modal.dataset.masterId;
+  fetch('/api/relationships/works-with/'+encodeURIComponent(masterId))
+    .then(r=>r.json()).then(d=>{
+      const chipsBox=document.getElementById('ww-chips');
+      const links=d.links||[];
+      if(!links.length){chipsBox.innerHTML='<span style="color:var(--text-ghost);font-size:11px">No links yet.</span>'}
+      else{
+        chipsBox.innerHTML=links.map(l=>
+          `<span class="pill" style="background:#1d4ed8;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;display:inline-flex;align-items:center;gap:6px">
+            ${esc(l.name||l.id)}
+            <span style="cursor:pointer;font-weight:bold" onclick="_wwRemoveLink('${escA(l.id)}')" title="Remove link">&times;</span>
+           </span>`
+        ).join('');
+      }
+      // preview greeting
+      const ids=[masterId].concat(links.map(l=>l.id));
+      fetch('/api/relationships/greeting',{method:'POST',headers:_jsonHeaders(),body:JSON.stringify({ids})})
+        .then(r=>r.json()).then(g=>{
+          const box=document.getElementById('ww-greeting');
+          if(!box)return;
+          if(!g||!g.named){box.style.display='none';return}
+          box.style.display='block';
+          box.innerHTML=`<div><strong>Named greeting:</strong> ${esc(g.named)}</div>`+
+            (g.alt!==g.named?`<div style="margin-top:4px;color:var(--text-ghost)"><strong>Alt:</strong> ${esc(g.alt)}</div>`:'');
+        });
     });
+}
+
+function _wwAddLink(toId,toName){
+  const modal=document.getElementById('ww-modal');
+  if(!modal)return;
+  const masterId=modal.dataset.masterId;
+  fetch('/api/relationships/works-with/add',{method:'POST',headers:_jsonHeaders(),
+    body:JSON.stringify({from_id:masterId,to_id:toId})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error,'error');return}
+    toast('Linked '+toName);
+    document.getElementById('ww-input').value='';
+    document.getElementById('ww-dropdown').style.display='none';
+    _wwRenderChips();
+    const masterRi=modal.dataset.masterRi;
+    if(masterRi)refreshDetail(parseInt(masterRi,10),'directory');
+  });
+}
+
+function _wwRemoveLink(toId){
+  const modal=document.getElementById('ww-modal');
+  if(!modal)return;
+  const masterId=modal.dataset.masterId;
+  fetch('/api/relationships/works-with/remove',{method:'POST',headers:_jsonHeaders(),
+    body:JSON.stringify({from_id:masterId,to_id:toId})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error,'error');return}
+    toast('Unlinked');
+    _wwRenderChips();
+    const masterRi=modal.dataset.masterRi;
+    if(masterRi)refreshDetail(parseInt(masterRi,10),'directory');
   });
 }
 

@@ -1,5 +1,5 @@
 """
-ROLLON AR v35.6.1-filterfix - A&R Operating System
+ROLLON AR v36 - A&R Operating System (Airtable parity rebuild)
 Google Sheets master. No external dependencies.
 """
 
@@ -16,6 +16,7 @@ from modules.id_resolver import IDResolver, cleanH as _module_cleanH
 from modules.lyric_doc import auto_generate_and_link as generate_lyric_doc
 from modules.scout_engine import (ScoutDiscovery, get_roster_artists, get_artist_profile,
     get_artist_songs, find_warm_connections as scout_warm_connections)
+from modules.relationships import RelationshipsEngine, LINK_TYPES as RELATIONSHIP_LINK_TYPES
 
 logging.basicConfig(filename='rollon.log', level=logging.WARNING,
     format='%(asctime)s %(levelname)s %(message)s')
@@ -165,6 +166,7 @@ sheets = SheetsManager(GOOGLE_SHEET_ID, CREDENTIALS_PATH, TOKEN_PATH)
 pitch_builder = PitchBuilder(sheets)
 split_calc = PubSplitCalculator(sheets)
 resolver = IDResolver(sheets)
+relationships = RelationshipsEngine(sheets)
 
 # Fast name-to-record lookup cache (built once, used by pill clicks)
 NAME_CACHE = {}  # name_lower -> {table, row_index, route, name}
@@ -2007,8 +2009,9 @@ def _fetch_mm_contacts(row_indices):
             if cleanH(h).lower() == name.lower():
                 return j
         return None
-    nc = col('Name'); ec = col('Email'); cc = col('City')
+    ac = col('Airtable ID'); nc = col('Name'); ec = col('Email'); cc = col('City')
     mc = col('MGMT Company'); lc = col('Record Label'); pc = col('Publishing Company')
+    srt = col('Set Out Reach Date/Time')
     indices = set(int(i) for i in (row_indices or []) if i)
     rows = data[1:]
     out = []
@@ -2023,17 +2026,24 @@ def _fetch_mm_contacts(row_indices):
         city = g(cc)
         out.append({
             'row_index': idx,
+            'airtable_id': g(ac),
             'name': g(nc),
             'email': email,
             'city': city,
             'mgmt': g(mc),
             'label': g(lc),
             'publisher': g(pc),
+            'set_out_reach': g(srt),
             'timezone': _timezone_for_city(city),
         })
     return out
 
 def _group_mm_contacts(contacts, group_by_company):
+    """v36: delegates to relationships.group_for_pitch when group_by_company is true.
+
+    Works With linkages override Company grouping per Phase 2D. When
+    group_by_company is False, each contact is emitted as a solo group.
+    """
     if not group_by_company:
         out = []
         for c in contacts:
@@ -2043,51 +2053,49 @@ def _group_mm_contacts(contacts, group_by_company):
                 'email': c.get('email', ''),
                 'tz': c.get('timezone') or '',
                 'row_indices': [c['row_index']],
+                'ids': [c.get('airtable_id', '')],
+                'greeting': 'Hi ' + (first[0] if first else ''),
+                'greeting_alt': 'Hi ' + (first[0] if first else ''),
+                'set_out_reach': c.get('set_out_reach', ''),
             })
         return out
-    groups = {}
-    loose = []
-    for c in contacts:
-        key = None
-        for field in ('mgmt', 'label', 'publisher'):
-            v = (c.get(field) or '').strip()
-            if v:
-                key = (field, v.lower())
-                break
-        if key is None:
-            loose.append(c)
-        else:
-            groups.setdefault(key, []).append(c)
+
+    id_to_contact = {c.get('airtable_id') or f"row:{c['row_index']}": c for c in contacts}
+    ids = [k for k in id_to_contact.keys() if k and not k.startswith('row:')]
+    loose = [c for c in contacts if not c.get('airtable_id')]
+    groups = relationships.group_for_pitch(ids) if ids else []
     out = []
-    for _, members in groups.items():
-        firsts = [((m.get('name') or '').split() or [''])[0] for m in members]
-        firsts = [f for f in firsts if f]
-        if len(members) == 1:
-            display = firsts[0] if firsts else ''
-        elif len(members) <= 3:
-            if len(firsts) == 2:
-                display = firsts[0] + ' & ' + firsts[1]
-            elif len(firsts) >= 3:
-                display = ', '.join(firsts[:-1]) + ' & ' + firsts[-1]
-            else:
-                display = firsts[0] if firsts else ''
-        else:
-            display = 'all'
-        emails = ', '.join(m.get('email', '') for m in members if m.get('email'))
+    for grp in groups:
+        gids = grp.get('ids') or []
+        members = [id_to_contact.get(i) for i in gids if id_to_contact.get(i)]
+        if not members:
+            continue
         tz = next((m.get('timezone') for m in members if m.get('timezone')), '')
+        set_out = next((m.get('set_out_reach') for m in members if m.get('set_out_reach')), '')
         out.append({
-            'first_name': display,
-            'email': emails,
+            'first_name': grp.get('greeting', '').replace('Hi ', '').strip(),
+            'greeting': grp.get('greeting', ''),
+            'greeting_alt': grp.get('greeting_alt', ''),
+            'email': grp.get('emails_joined') or ', '.join(m.get('email', '') for m in members if m.get('email')),
             'tz': tz,
             'row_indices': [m['row_index'] for m in members],
+            'ids': gids,
+            'group_key': grp.get('group_key', 'solo'),
+            'set_out_reach': set_out,
         })
     for c in loose:
         first = (c.get('name') or '').strip().split()
+        fn = first[0] if first else ''
         out.append({
-            'first_name': first[0] if first else '',
+            'first_name': fn,
+            'greeting': 'Hi ' + fn,
+            'greeting_alt': 'Hi ' + fn,
             'email': c.get('email', ''),
             'tz': c.get('timezone') or '',
             'row_indices': [c['row_index']],
+            'ids': [],
+            'group_key': 'solo',
+            'set_out_reach': c.get('set_out_reach', ''),
         })
     return out
 
@@ -2191,47 +2199,202 @@ def api_mail_merge_export():
     })
 
 
-# ==================== WORKS WITH ====================
+# ==================== WORKS WITH (v36 relationships engine) ====================
+# See modules/relationships.py. Works With is stored as pipe-separated
+# Airtable IDs in the Personnel.Works With column. Writes are bidirectional.
+
+@app.route('/api/relationships/ensure-columns', methods=['POST'])
+@admin_required
+def api_relationships_ensure_columns():
+    try:
+        added = relationships.ensure_columns()
+        return jsonify({'success': True, 'columns': added})
+    except Exception as e:
+        logging.warning(f'ensure_columns failed: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/search', methods=['POST'])
+@login_required
+def api_relationships_search():
+    d = request.json or {}
+    q = (d.get('q') or '').strip()
+    exclude_id = (d.get('exclude_id') or '').strip()
+    try:
+        results = relationships.search_by_name(q, limit=15, exclude_id=exclude_id)
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/works-with/<path:personnel_id>', methods=['GET'])
+@login_required
+def api_relationships_works_with_get(personnel_id):
+    try:
+        linked_ids = relationships.get_works_with(personnel_id)
+        details = []
+        for lid in linked_ids:
+            ri = relationships.row_for_id(lid)
+            data = relationships.row_data(lid) or {}
+            details.append({
+                'id': lid,
+                'name': data.get('Name', ''),
+                'email': data.get('Email', ''),
+                'row_index': ri,
+                'company': (data.get('MGMT Company') or data.get('Record Label')
+                            or data.get('Publishing Company') or ''),
+            })
+        return jsonify({'links': details})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/works-with/add', methods=['POST'])
+@login_required
+def api_relationships_works_with_add():
+    d = request.json or {}
+    id_a = (d.get('from_id') or '').strip()
+    id_b = (d.get('to_id') or '').strip()
+    # Convenience: row_index inputs resolve to Airtable IDs
+    if not id_a and d.get('from_row'):
+        id_a = relationships.id_for_row(int(d['from_row']))
+    if not id_b and d.get('to_row'):
+        id_b = relationships.id_for_row(int(d['to_row']))
+    if not id_a or not id_b:
+        return jsonify({'error': 'Both from_id and to_id required'}), 400
+    try:
+        ok = relationships.add_link(id_a, id_b)
+        if not ok:
+            return jsonify({'error': 'Could not resolve one or both IDs'}), 400
+        return jsonify({
+            'success': True,
+            'from_id': id_a,
+            'to_id': id_b,
+            'links_from_a': relationships.get_works_with(id_a),
+            'links_from_b': relationships.get_works_with(id_b),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/works-with/remove', methods=['POST'])
+@login_required
+def api_relationships_works_with_remove():
+    d = request.json or {}
+    id_a = (d.get('from_id') or '').strip()
+    id_b = (d.get('to_id') or '').strip()
+    if not id_a and d.get('from_row'):
+        id_a = relationships.id_for_row(int(d['from_row']))
+    if not id_b and d.get('to_row'):
+        id_b = relationships.id_for_row(int(d['to_row']))
+    if not id_a or not id_b:
+        return jsonify({'error': 'Both IDs required'}), 400
+    try:
+        relationships.remove_link(id_a, id_b)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/group', methods=['POST'])
+@login_required
+def api_relationships_group():
+    """Given an input list of Personnel IDs or row indices, return the pitch groups."""
+    d = request.json or {}
+    ids = [str(i).strip() for i in (d.get('ids') or []) if i]
+    for ri in (d.get('row_indices') or []):
+        try:
+            aid = relationships.id_for_row(int(ri))
+            if aid:
+                ids.append(aid)
+        except Exception:
+            pass
+    if not ids:
+        return jsonify({'groups': []})
+    try:
+        groups = relationships.group_for_pitch(ids)
+        return jsonify({'groups': groups})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/greeting', methods=['POST'])
+@login_required
+def api_relationships_greeting():
+    d = request.json or {}
+    ids = [str(i).strip() for i in (d.get('ids') or []) if i]
+    if not ids:
+        return jsonify({'named': '', 'alt': '', 'first_names': [], 'count': 0})
+    try:
+        return jsonify(relationships.greeting_for(ids))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/lookup/<path:personnel_id>', methods=['GET'])
+@login_required
+def api_relationships_lookup(personnel_id):
+    try:
+        return jsonify(relationships.lookup_all_relationships(personnel_id))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/generic-add', methods=['POST'])
+@login_required
+def api_relationships_generic_add():
+    d = request.json or {}
+    id_a = (d.get('from_id') or '').strip()
+    id_b = (d.get('to_id') or '').strip()
+    lt = (d.get('link_type') or '').strip()
+    if not (id_a and id_b and lt):
+        return jsonify({'error': 'from_id, to_id, link_type required'}), 400
+    if lt not in RELATIONSHIP_LINK_TYPES:
+        return jsonify({'error': f'Unknown link_type {lt}'}), 400
+    try:
+        ok = relationships.generic_add(id_a, id_b, lt)
+        if not ok:
+            return jsonify({'error': 'Could not resolve IDs for link'}), 400
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/relationships/generic-remove', methods=['POST'])
+@login_required
+def api_relationships_generic_remove():
+    d = request.json or {}
+    id_a = (d.get('from_id') or '').strip()
+    id_b = (d.get('to_id') or '').strip()
+    lt = (d.get('link_type') or '').strip()
+    if not (id_a and id_b and lt):
+        return jsonify({'error': 'from_id, to_id, link_type required'}), 400
+    if lt not in RELATIONSHIP_LINK_TYPES:
+        return jsonify({'error': f'Unknown link_type {lt}'}), 400
+    try:
+        relationships.generic_remove(id_a, id_b, lt)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ---- Backwards-compat shim for the pre-v36 name-based endpoint. ----
+# Old UI sent a comma-separated list of names. We resolve names to Airtable IDs
+# and defer to the new engine. Kept so any cached JS/loaded page still works
+# during the v36 rollout.
 @app.route('/api/automate/works-with', methods=['POST'])
 @login_required
-def api_works_with():
-    d=request.json; mri=d.get('master_row_index'); lnames=d.get('linked_names',[])
-    if not mri or not lnames: return jsonify({'error':'Master row and names required'}),400
+def api_works_with_legacy():
+    d = request.json or {}
+    mri = d.get('master_row_index')
+    linked_names = d.get('linked_names') or []
+    if not mri or not linked_names:
+        return jsonify({'error': 'Master row and names required'}), 400
     try:
-        headers=sheets.get_headers('Personnel')
-        wwc=find_col(headers,'works with'); ec=find_col(headers,'email'); nc=find_col(headers,'name')
-        cec=find_col(headers,'emails combined'); cnc=find_col(headers,'combined first names')
-        tc=find_col(headers,'tags')
-        mr=sheets.get_row('Personnel',mri)
-        mn=str(mr[nc]).strip() if nc and nc<len(mr) else ''
-        me=str(mr[ec]).strip() if ec and ec<len(mr) else ''
-        cww=str(mr[wwc]).strip() if wwc and wwc<len(mr) else ''
-        wl=[t.strip() for t in cww.split(' | ') if t.strip()] if cww else []
-        emails=[me] if me else []; fnames=[mn.split()[0]] if mn else []
-        data=sheets.get_all_rows('Personnel'); allr=data[1:] if data else []
-        for ln in lnames:
-            if ln not in wl: wl.append(ln)
-            for i,row in enumerate(allr):
-                if nc is not None and nc<len(row) and str(row[nc]).strip().lower()==ln.lower():
-                    lri=i+2
-                    le=str(row[ec]).strip() if ec and ec<len(row) else ''
-                    if le: emails.append(le)
-                    fnames.append(ln.split()[0])
-                    lww=str(row[wwc]).strip() if wwc and wwc<len(row) else ''
-                    ll=[t.strip() for t in lww.split(' | ') if t.strip()] if lww else []
-                    if mn not in ll:
-                        ll.append(mn); sheets.update_cell('Personnel',lri,wwc+1,' | '.join(ll))
-                    if tc is not None:
-                        lt=str(row[tc]).strip() if tc<len(row) else ''
-                        tl=split_tags(lt)
-                        if "Don't Mass Pitch" not in tl:
-                            tl.append("Don't Mass Pitch")
-                            sheets.update_cell('Personnel',lri,tc+1,' | '.join(tl))
-                    break
-        if wwc is not None: sheets.update_cell('Personnel',mri,wwc+1,' | '.join(wl))
-        if cec is not None: sheets.update_cell('Personnel',mri,cec+1,', '.join(emails))
-        if cnc is not None: sheets.update_cell('Personnel',mri,cnc+1,', '.join(fnames))
-        return jsonify({'success':True,'works_with':wl,'combined_emails':emails,'combined_names':fnames})
+        master_id = relationships.id_for_row(int(mri))
+        if not master_id:
+            return jsonify({'error': 'Master row has no Airtable ID'}), 400
+        results = {'added': [], 'missing': []}
+        for ln in linked_names:
+            matches = relationships.search_by_name(ln, limit=1)
+            if matches and matches[0]['id']:
+                ok = relationships.add_link(master_id, matches[0]['id'])
+                if ok:
+                    results['added'].append({'name': matches[0]['name'], 'id': matches[0]['id']})
+                    continue
+            results['missing'].append(ln)
+        return jsonify({'success': True, **results})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -4617,6 +4780,12 @@ if __name__ == '__main__':
     except Exception as e: print(f"  Warning: {e}")
     print("Building name cache...")
     try: build_name_cache()
+    except Exception as e: print(f"  Warning: {e}")
+
+    print("Ensuring v36 relationship columns (Backlinks Cache, Grouping Override)...")
+    try:
+        added = relationships.ensure_columns()
+        print(f"  Columns: {added}")
     except Exception as e: print(f"  Warning: {e}")
 
     print("Scanning overdue invoices...")

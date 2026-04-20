@@ -6,7 +6,7 @@
 <title>{% block title %}ROLLON AR{% endblock %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="/static/css/style.css?v=35.6">
+<link rel="stylesheet" href="/static/css/style.css?v=36">
 </head>
 <body>
 {% if session.get('authenticated') %}
@@ -64,10 +64,10 @@
 })();
 </script>
 {% endif %}
-<script src="/static/js/core.js?v=35.6"></script>
-<script src="/static/js/filters.js?v=35.6"></script>
-<script src="/static/js/grid-engine.js?v=35.6"></script>
-<script src="/static/js/monitor.js?v=35.6"></script>
+<script src="/static/js/core.js?v=36"></script>
+<script src="/static/js/filters.js?v=36"></script>
+<script src="/static/js/grid-engine.js?v=36"></script>
+<script src="/static/js/monitor.js?v=36"></script>
 {% block scripts %}{% endblock %}
 {% if session.get('role') == 'admin' %}
 <script>
