@@ -1,5 +1,5 @@
 """
-ROLLON AR v36 - A&R Operating System (Airtable parity rebuild)
+ROLLON AR v37.3 - A&R Operating System (Airtable parity rebuild)
 Google Sheets master. No external dependencies.
 """
 
@@ -446,6 +446,79 @@ _CLEAN_H_RE = re.compile(r'\[✓\]\s*|\[✗\]\s*|\[\?\?\]\s*|\[∅\]\s*|\[\s*✓
 def cleanH(h):
     return _CLEAN_H_RE.sub('', h or '').strip()
 
+# v37.3: strip ALL bracket markers including [USE], [LU], [Sync] so "Combined
+# First Names [USE]" resolves as "Combined First Names".
+_CLEAN_H_FULL_RE = re.compile(r'\[\s*[✓✗∅?]+\s*\]\s*|\[USE\]\s*|\[LU\]\s*|\[Sync\]\s*')
+def cleanH_full(h):
+    return _CLEAN_H_FULL_RE.sub('', h or '').strip()
+
+# v37.3: filter column aliases — user-typed name -> sheet header (case insensitive)
+COLUMN_ALIASES = {
+    'country': 'Countries',
+    'manager': 'MGMT Rep',
+    'a&r rep': 'Record Label A&R',
+    'ar rep': 'Record Label A&R',
+    'first name': 'Combined First Names',
+    'email address': 'Email',
+    'emails': 'Email',
+    'role': 'Field',
+}
+
+# v37.3: value aliases per column (country codes -> full names for smoke tests)
+COUNTRY_ALIASES = {
+    'uk': 'united kingdom',
+    'gb': 'united kingdom',
+    'us': 'united states',
+    'usa': 'united states',
+    'eng': 'united kingdom',
+}
+VALUE_ALIASES = {
+    'countries': COUNTRY_ALIASES,
+    'country': COUNTRY_ALIASES,
+}
+
+_MULTI_SPLIT_RE = re.compile(r'[|,;]')
+
+def _split_multi_cell(cell):
+    """v37.3: split a cell value on [|,;] with optional whitespace, trim each
+    piece, lowercase. Used for multi-value matching."""
+    if not cell:
+        return []
+    return [p.strip().lower() for p in _MULTI_SPLIT_RE.split(str(cell)) if p.strip()]
+
+def _apply_value_aliases(col_name, values):
+    """If the column has a value alias map (e.g. country codes), map each
+    filter value through it. Case insensitive."""
+    if not col_name:
+        return values
+    aliases = VALUE_ALIASES.get(col_name.lower()) or VALUE_ALIASES.get(cleanH_full(col_name).lower())
+    if not aliases:
+        return values
+    return [aliases.get(v.lower(), v) for v in values]
+
+def resolve_filter_col(headers, col_name):
+    """v37.3: resolve a user-typed column name to a sheet header index.
+    Honours COLUMN_ALIASES. Returns (idx, canonical_name) or (None, '')."""
+    if not col_name:
+        return None, ''
+    raw = col_name.strip()
+    # Apply alias
+    canonical = COLUMN_ALIASES.get(raw.lower(), raw)
+    cn = canonical.lower()
+    # Pass 1: exact cleanH match
+    for j, h in enumerate(headers):
+        if cleanH(h).lower() == cn:
+            return j, cleanH(h)
+    # Pass 2: full cleanH_full match (strips [USE]/[LU]/[Sync])
+    for j, h in enumerate(headers):
+        if cleanH_full(h).lower() == cn:
+            return j, cleanH_full(h)
+    # Pass 3: substring
+    for j, h in enumerate(headers):
+        if cn in cleanH(h).lower() or cn in cleanH_full(h).lower():
+            return j, cleanH(h)
+    return None, ''
+
 def next_system_id():
     """Generate next universal System ID (RLN-XXXXX) across all tables. Thread-safe."""
     with _ID_LOCK:
@@ -473,61 +546,147 @@ def next_system_id():
         if max_num == 0: max_num = 8000  # Start after existing Airtable records
         return f"RLN-{max_num + 1:05d}"
 
-def apply_filter(rows, col_idx, op, val):
-    vl = val.lower().strip(); result = []
+def _parse_filter_date(s):
+    if not s:
+        return None
+    s = str(s).strip()
+    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d/%m/%Y',
+                '%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S',
+                '%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S',
+                '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+    return None
+
+def apply_filter(rows, col_idx, op, val, col_name=''):
+    """v37.3: type-aware filter with Airtable-parity operators.
+
+    Multi-value cells (pipe, comma, or semicolon separated) match
+    per-piece after trim+lowercase. Linked Airtable record IDs are
+    resolved to human names before comparison. Value aliases (e.g. UK
+    -> United Kingdom) apply when col_name is recognised."""
+    result = []
+    raw_val = (val or '').strip()
+    vl = raw_val.lower()
+    filter_vals_raw = [v.strip() for v in raw_val.split(',') if v.strip()]
+    aliased = _apply_value_aliases(col_name, filter_vals_raw) if col_name else filter_vals_raw
+    filter_vals = [f.lower() for f in aliased]
+    primary = filter_vals[0] if filter_vals else vl
+
     for ri, r in rows:
         raw = str(r[col_idx]) if col_idx < len(r) else ''
-        # Countries, MGMT Company, Record Label etc. store Airtable record IDs
-        # (recXXX) on disk but the grid shows resolved human-readable names.
-        # Resolve before comparison so UI filter values match what users see.
         try:
             resolved = resolver.resolve_value('', raw) if raw else raw
         except Exception:
             resolved = raw
-        cell = str(resolved).lower().strip()
-        cell_parts = [p.strip() for p in cell.split('|') if p.strip()]
+        cell = str(resolved).strip()
+        cell_l = cell.lower()
+        parts = _split_multi_cell(cell_l)
         m = False
-        if op == 'contains': m = vl in cell
+        if op == 'is_empty':
+            m = not cell_l
+        elif op == 'is_not_empty':
+            m = bool(cell_l)
+        elif op == 'contains':
+            m = (any(fv in cell_l for fv in filter_vals) if filter_vals else (vl in cell_l)) if (filter_vals or vl) else True
         elif op == 'does_not_contain':
-            vals = [v.strip() for v in vl.split(',') if v.strip()]
-            if vals:
-                m = not any(any(v in cp for cp in cell_parts) for v in vals)
+            if filter_vals:
+                m = not any(any(fv == p or fv in p for p in parts) for fv in filter_vals)
             else:
-                m = vl not in cell
-        elif op == 'contains_any':
-            vals = [v.strip() for v in vl.split(',') if v.strip()]
-            m = any(any(v in cp or cp in v for cp in cell_parts) for v in vals)
-        elif op == 'contains_all':
-            vals = [v.strip() for v in vl.split(',') if v.strip()]
-            m = all(any(v in cp for cp in cell_parts) for v in vals)
-        elif op == 'is': m = cell == vl or vl in cell_parts
-        elif op == 'is_not': m = cell != vl and vl not in cell_parts
-        elif op == 'is_empty': m = cell == ''
-        elif op == 'is_not_empty': m = cell != ''
-        elif op == 'starts_with': m = cell.startswith(vl)
-        elif op == 'ends_with': m = cell.endswith(vl)
-        elif op in ('is_before', 'is_after', 'is_on_or_before', 'is_on_or_after'):
-            # Date comparison
+                m = vl not in cell_l
+        elif op in ('has_any_of', 'contains_any', 'is_any_of'):
+            m = any(fv == p or fv in p for p in parts for fv in filter_vals)
+        elif op in ('has_all_of', 'contains_all'):
+            m = bool(filter_vals) and all(any(fv == p or fv in p for p in parts) for fv in filter_vals)
+        elif op in ('has_none_of', 'is_none_of'):
+            m = not any(fv == p or fv in p for p in parts for fv in filter_vals)
+        elif op == 'has_any_links':
+            m = bool(cell_l)
+        elif op == 'has_no_links':
+            m = not bool(cell_l)
+        elif op == 'is':
+            if filter_vals:
+                m = any(fv == cell_l for fv in filter_vals) or any(fv == p for p in parts for fv in filter_vals)
+            else:
+                m = cell_l == vl
+        elif op == 'is_not':
+            if filter_vals:
+                m = not (any(fv == cell_l for fv in filter_vals) or any(fv == p for p in parts for fv in filter_vals))
+            else:
+                m = cell_l != vl
+        elif op == 'starts_with':
+            m = cell_l.startswith(primary)
+        elif op == 'ends_with':
+            m = cell_l.endswith(primary)
+        elif op in ('equals',):
             try:
-                from datetime import datetime as dt
-                # Try common date formats
-                cell_date = None
-                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d/%m/%Y', '%Y-%m-%dT%H:%M'):
-                    try: cell_date = dt.strptime(cell, fmt); break
-                    except Exception as e: pass
-                val_date = None
-                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
-                    try: val_date = dt.strptime(vl, fmt); break
-                    except Exception as e: pass
-                if cell_date and val_date:
-                    if op == 'is_before': m = cell_date < val_date
-                    elif op == 'is_after': m = cell_date > val_date
-                    elif op == 'is_on_or_before': m = cell_date <= val_date
-                    elif op == 'is_on_or_after': m = cell_date >= val_date
-            except Exception as e:
-                logging.warning(f'Date filter comparison: {e}')
-        else: m = vl in cell
-        if m: result.append((ri, r))
+                m = float(cell_l) == float(primary)
+            except Exception:
+                m = cell_l == primary
+        elif op in ('not_equals', 'ne'):
+            try:
+                m = float(cell_l) != float(primary)
+            except Exception:
+                m = cell_l != primary
+        elif op in ('greater_than', 'gt'):
+            try:
+                m = float(cell_l) > float(primary)
+            except Exception:
+                m = False
+        elif op in ('less_than', 'lt'):
+            try:
+                m = float(cell_l) < float(primary)
+            except Exception:
+                m = False
+        elif op == 'gte':
+            try:
+                m = float(cell_l) >= float(primary)
+            except Exception:
+                m = False
+        elif op == 'lte':
+            try:
+                m = float(cell_l) <= float(primary)
+            except Exception:
+                m = False
+        elif op in ('is_before', 'before', 'is_after', 'after',
+                    'is_on_or_before', 'is_on_or_after', 'between',
+                    'within_last', 'more_than_n_days_ago'):
+            cd = _parse_filter_date(cell)
+            if op in ('within_last', 'more_than_n_days_ago'):
+                try:
+                    n_days = int(float(primary))
+                except Exception:
+                    n_days = 0
+                if cd and n_days:
+                    delta = (datetime.now() - cd).days
+                    if op == 'within_last':
+                        m = 0 <= delta <= n_days
+                    else:
+                        m = delta > n_days
+            elif op == 'between':
+                bounds = [_parse_filter_date(v) for v in filter_vals_raw]
+                bounds = [b for b in bounds if b]
+                if cd and len(bounds) == 2:
+                    lo, hi = sorted(bounds)
+                    m = lo <= cd <= hi
+            else:
+                vd = _parse_filter_date(primary)
+                if cd and vd:
+                    if op in ('is_before', 'before'):
+                        m = cd < vd
+                    elif op in ('is_after', 'after'):
+                        m = cd > vd
+                    elif op == 'is_on_or_before':
+                        m = cd <= vd
+                    elif op == 'is_on_or_after':
+                        m = cd >= vd
+        else:
+            # Unknown op: default to contains semantics
+            m = any(fv in cell_l for fv in filter_vals) if filter_vals else (vl in cell_l)
+        if m:
+            result.append((ri, r))
     return result
 
 def find_col(headers, *terms):
@@ -1008,13 +1167,23 @@ def api_autocomplete(table, field):
         data = sheets.get_all_rows(sn)
         if not data: return jsonify({'values': []})
         headers = data[0]; rows = data[1:]
-        col = find_col(headers, field)
+        col, _cname = resolve_filter_col(headers, field)
+        if col is None:
+            col = find_col(headers, field)
         if col is None: return jsonify({'values':[],'error':f'Field not found'})
         vals = set()
         for row in rows:
             if col < len(row):
-                for t in split_tags(str(row[col])):
-                    if t and not t.startswith('rec'): vals.add(t)
+                raw_cell = str(row[col])
+                # Resolve linked record IDs (recXXX) to human names
+                try:
+                    resolved = resolver.resolve_value('', raw_cell) if raw_cell else raw_cell
+                except Exception:
+                    resolved = raw_cell
+                for t in _MULTI_SPLIT_RE.split(str(resolved)):
+                    t = t.strip()
+                    if t and not t.startswith('rec'):
+                        vals.add(t)
         filtered = [v for v in sorted(vals) if q in v.lower()] if q else sorted(vals)
         # Sort: starts-with first, then word-starts, then alphabetical
         if q:
@@ -1229,32 +1398,24 @@ def api_songs():
                 # OR: union of all filter matches
                 all_rows = rows; matched = set()
                 for f in adv_filters:
-                    ci = None
-                    for j,h in enumerate(headers):
-                        if cleanH(h).lower()==f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci=j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
                     for ri, r in all_rows:
                         if ri not in matched:
-                            filtered = apply_filter([(ri, r)], ci, f['op'], f['val'])
+                            filtered = apply_filter([(ri, r)], ci, f['op'], f['val'], cname)
                             if filtered: matched.add(ri)
                 rows = [(ri, r) for ri, r in all_rows if ri in matched]
             else:
                 # AND: sequential narrowing (default)
                 for f in adv_filters:
-                    ci = None
-                    for j,h in enumerate(headers):
-                        if cleanH(h).lower()==f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci=j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
-                    rows = apply_filter(rows, ci, f['op'], f['val'])
+                    rows = apply_filter(rows, ci, f['op'], f['val'], cname)
         if sort_fields:
             rows = apply_multi_sort(rows, headers, sort_fields)
         groups = None
         if group_by:
-            gi = None
-            for j,h in enumerate(headers):
-                if cleanH(h).lower()==group_by.lower(): gi=j; break
+            gi, _gn = resolve_filter_col(headers, group_by)
             if gi is not None:
                 gm = {}
                 for ri,r in rows:
@@ -1594,7 +1755,20 @@ def api_directory():
     try:
         data = sheets.get_all_rows('Personnel')
         headers = data[0] if data else []; raw = data[1:]
-        rows = [(i+2,r) for i,r in enumerate(raw)]
+        # v37.3: the Personnel sheet has trailing empty rows left over from the
+        # Airtable migration. Exclude any row without an Airtable ID or Name
+        # so "Clear all filters" shows the real contact count (~5305).
+        name_col_idx = find_col(headers, 'Name')
+        id_col_idx = find_col(headers, 'Airtable ID')
+        def _is_real_contact(r):
+            # v37.3: a real Personnel contact has an Airtable-style rec ID.
+            # Rows without one are legacy brand partnerships / import remnants.
+            if id_col_idx is not None and id_col_idx < len(r):
+                aid = str(r[id_col_idx]).strip()
+                if aid.startswith('rec') and len(aid) > 10:
+                    return True
+            return False
+        rows = [(i+2, r) for i, r in enumerate(raw) if _is_real_contact(r)]
         if search:
             sl=search.lower()
             rows=[(ri,r) for ri,r in rows if any(sl in str(c).lower() for c in r)]
@@ -1602,31 +1776,23 @@ def api_directory():
             if filter_mode == 'or':
                 all_rows = rows; matched = set()
                 for f in adv_filters:
-                    ci=None
-                    for j,h in enumerate(headers):
-                        if cleanH(h).lower()==f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci=j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
                     for ri, r in all_rows:
                         if ri not in matched:
-                            filtered = apply_filter([(ri, r)], ci, f['op'], f['val'])
+                            filtered = apply_filter([(ri, r)], ci, f['op'], f['val'], cname)
                             if filtered: matched.add(ri)
                 rows = [(ri, r) for ri, r in all_rows if ri in matched]
             else:
                 for f in adv_filters:
-                    ci=None
-                    for j,h in enumerate(headers):
-                        if cleanH(h).lower()==f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci=j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
-                    rows = apply_filter(rows, ci, f['op'], f['val'])
+                    rows = apply_filter(rows, ci, f['op'], f['val'], cname)
         if sort_fields:
             rows = apply_multi_sort(rows, headers, sort_fields)
         groups=None
         if group_by:
-            gi=None
-            for j,h in enumerate(headers):
-                if cleanH(h).lower()==group_by.lower(): gi=j; break
+            gi, _gn = resolve_filter_col(headers, group_by)
             if gi is not None:
                 gm={}
                 for ri,r in rows:
@@ -2231,24 +2397,18 @@ def _resolve_mm_rows(payload):
             if mode == 'or':
                 allr = rows; matched = set()
                 for f in advf:
-                    ci = None
-                    for j, h in enumerate(headers):
-                        if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci = j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
                     for ri, r in allr:
                         if ri not in matched:
-                            if apply_filter([(ri, r)], ci, f['op'], f['val']):
+                            if apply_filter([(ri, r)], ci, f['op'], f['val'], cname):
                                 matched.add(ri)
                 rows = [(ri, r) for ri, r in allr if ri in matched]
             else:
                 for f in advf:
-                    ci = None
-                    for j, h in enumerate(headers):
-                        if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                            ci = j; break
+                    ci, cname = resolve_filter_col(headers, f['col'])
                     if ci is None: continue
-                    rows = apply_filter(rows, ci, f['op'], f['val'])
+                    rows = apply_filter(rows, ci, f['op'], f['val'], cname)
         return _fetch_mm_contacts([ri for ri, _ in rows])
     except Exception as e:
         logging.warning('_resolve_mm_rows error: %s', e)
@@ -2274,10 +2434,13 @@ def api_mail_merge_preview():
         'cooldown_conflict_count': len(conflicts),
     })
 
-@app.route('/api/directory/mail-merge-export', methods=['POST'])
-@admin_required
-def api_mail_merge_export():
-    payload = request.get_json(silent=True) or {}
+def _build_mm_export_rows(payload):
+    """Shared builder for Mail Merge export rows.
+
+    Returns dict with keys:
+      headers, data_rows, groups, contacts, skipped_dmp,
+      base_date, hh, mm, send_mode, fixed_tz, visible_cols, title, pitch_name.
+    Raises ValueError if inputs are invalid."""
     pitch_name = (payload.get('pitch_name') or '').strip()
     group_by = bool(payload.get('group_by_company', True))
     send_date_s = (payload.get('send_date') or '').strip()
@@ -2287,13 +2450,14 @@ def api_mail_merge_export():
     visible_cols = payload.get('visible_columns') or []
     include_dmp = bool(payload.get('include_dont_mass_pitch', False))
     if not pitch_name:
-        return jsonify({'error': 'Pitch name is required'}), 400
+        raise ValueError('Pitch name is required')
+
     contacts = _resolve_mm_rows(payload)
     if not contacts:
-        return jsonify({'error': 'No contacts with email found in the selection'}), 400
+        raise ValueError('No contacts with email found in the selection')
     contacts, skipped_dmp = _filter_dont_mass_pitch(contacts, include_dmp)
     if not contacts:
-        return jsonify({'error': 'All contacts in the selection carry the "Don\'t Mass Pitch" tag. Tick "Include Don\'t Mass Pitch contacts" to send to them anyway.'}), 400
+        raise ValueError('All contacts in the selection carry the "Don\'t Mass Pitch" tag. Tick "Include Don\'t Mass Pitch contacts" to send to them anyway.')
     groups = _group_mm_contacts(contacts, group_by)
 
     today = datetime.now().date()
@@ -2313,29 +2477,61 @@ def api_mail_merge_export():
     else:
         hh, mm = 10, 22
 
-    # Resolve which extra columns the user wants (visible Directory columns)
-    extra_headers = []
-    extra_col_indices = []
-    if visible_cols:
-        excluded = {h.lower() for h in MAIL_MERGE_HEADERS}
-        excluded.update({'first name', 'email', 'email address', 'scheduled date'})
-        try:
-            p_headers_all = sheets.get_headers('Personnel')
-        except Exception:
-            p_headers_all = []
-        p_data_rows = None
-        for col_name in visible_cols:
-            cn = str(col_name).strip()
-            if not cn or cn.lower() in excluded:
-                continue
-            for i, h in enumerate(p_headers_all):
-                if cleanH(h).lower() == cn.lower():
-                    extra_headers.append(cn)
-                    extra_col_indices.append(i)
-                    break
-        if extra_col_indices:
-            pd = sheets.get_all_rows('Personnel')
-            p_data_rows = pd[1:] if pd else []
+    # --- v37.3: final column layout ---
+    # Directory visible columns first (in the order Celina sees them), then
+    # append any of the 5 required Mail Merge columns that are NOT already in
+    # the visible set (case-insensitive match against a known alias list).
+    p_headers_all = []
+    try:
+        p_headers_all = sheets.get_headers('Personnel')
+    except Exception:
+        p_headers_all = []
+    pd = sheets.get_all_rows('Personnel')
+    p_data_rows = pd[1:] if pd else []
+
+    required_aliases = {
+        'First Name': {'first name', 'combined first names'},
+        'Email Address': {'email address', 'emails combined'},
+        'Scheduled Date': {'scheduled date', 'date/time in la to send email',
+                           'send date', 'set out reach date/time'},
+        'File Attachments': {'file attachments', 'attachments'},
+        'Mail Merge Status': {'mail merge status'},
+    }
+
+    visible_clean = []
+    for v in visible_cols or []:
+        vc = cleanH(str(v)).strip()
+        if vc and vc not in visible_clean:
+            visible_clean.append(vc)
+
+    final_headers = list(visible_clean)
+    for req, aliases in required_aliases.items():
+        if not any(vc.lower() in aliases or vc.lower() == req.lower() for vc in visible_clean):
+            final_headers.append(req)
+
+    # Map each final header to either a magic role or a Personnel column idx.
+    # "Email" counts as the combined-email role so Celina's grouped rows get a
+    # comma-joined address list even when her visible column is named "Email"
+    # rather than "Email Address".
+    header_kind = []  # list of ('role', role_name) or ('col', idx) or ('blank', '')
+    for h in final_headers:
+        hl = h.lower()
+        if hl == 'first name' or hl in required_aliases['First Name']:
+            header_kind.append(('role', 'first_name'))
+        elif hl == 'email address' or hl == 'email' or hl in required_aliases['Email Address']:
+            header_kind.append(('role', 'email'))
+        elif hl == 'scheduled date' or hl in required_aliases['Scheduled Date']:
+            header_kind.append(('role', 'scheduled'))
+        elif hl == 'file attachments':
+            header_kind.append(('blank', ''))
+        elif hl == 'mail merge status':
+            header_kind.append(('blank', ''))
+        else:
+            idx = _find_personnel_col(p_headers_all, h)
+            header_kind.append(('col', idx))
+
+    cfn_idx = _find_personnel_col(p_headers_all, COMBINED_FIRST_NAMES_COLUMN, 'Combined First Names')
+    ec_idx = _find_personnel_col(p_headers_all, EMAILS_COMBINED_COLUMN, 'Emails Combined')
 
     data_rows = []
     for g in groups:
@@ -2344,46 +2540,184 @@ def api_mail_merge_export():
         else:
             recipient_tz = g.get('tz', '') or fixed_tz
             scheduled = _format_mm_schedule(hh, mm, recipient_tz, base_date, sender_tz=TZ_LA)
-        greeting_first = (g.get('greeting') or '').replace('Hi ', '', 1) or g.get('first_name', '')
-        row = [greeting_first, g['email'], scheduled, '', '']
-        # Append extras pulled from Personnel for this group (joined across members)
-        if extra_col_indices and p_data_rows is not None:
-            for col_idx in extra_col_indices:
-                joined = []
-                for ri in (g.get('row_indices') or []):
-                    idx = ri - 2
-                    if 0 <= idx < len(p_data_rows):
-                        v = p_data_rows[idx][col_idx] if col_idx < len(p_data_rows[idx]) else ''
-                        v = str(v).strip()
-                        if v and v not in joined:
-                            joined.append(v)
-                row.append(' | '.join(joined))
+
+        group_ris = g.get('row_indices') or []
+        # First Name: prefer the pre-written Combined First Names [USE] cell
+        # for the first group member (so the whole group shares one greeting),
+        # else fall back to computed greeting / own first name.
+        first_name = ''
+        group_email = g.get('email') or ''
+        if group_ris:
+            first_ri = group_ris[0]
+            idx0 = first_ri - 2
+            if cfn_idx is not None and 0 <= idx0 < len(p_data_rows):
+                cell = p_data_rows[idx0]
+                if cfn_idx < len(cell):
+                    first_name = str(cell[cfn_idx]).strip()
+            if ec_idx is not None and 0 <= idx0 < len(p_data_rows):
+                cell = p_data_rows[idx0]
+                if ec_idx < len(cell):
+                    ec_val = str(cell[ec_idx]).strip()
+                    if ec_val:
+                        group_email = ec_val
+        if not first_name:
+            # derive from greeting
+            first_name = (g.get('greeting') or '').replace('Hi ', '', 1).strip() \
+                or g.get('first_name', '')
+
+        row = []
+        for kind, data in header_kind:
+            if kind == 'role':
+                if data == 'first_name':
+                    row.append(first_name)
+                elif data == 'email':
+                    row.append(group_email)
+                elif data == 'scheduled':
+                    row.append(scheduled)
+                else:
+                    row.append('')
+            elif kind == 'col':
+                if data is None:
+                    row.append('')
+                else:
+                    joined = []
+                    for ri in group_ris:
+                        idx = ri - 2
+                        if 0 <= idx < len(p_data_rows):
+                            cell = p_data_rows[idx]
+                            v = cell[data] if data < len(cell) else ''
+                            try:
+                                v = resolver.resolve_value('', str(v)) if v else str(v)
+                            except Exception:
+                                v = str(v)
+                            v = v.strip()
+                            if v and v not in joined:
+                                joined.append(v)
+                    row.append(' | '.join(joined))
+            else:
+                row.append('')
         data_rows.append(row)
-    data_rows.sort(key=lambda r: r[2])
+
+    # Sort by scheduled date column if present
+    sched_col = None
+    for i, (kind, data) in enumerate(header_kind):
+        if kind == 'role' and data == 'scheduled':
+            sched_col = i
+            break
+    if sched_col is not None:
+        data_rows.sort(key=lambda r: r[sched_col] if sched_col < len(r) else '')
+
     title = pitch_name + ' - ' + today.strftime('%b %d %Y')
+    return {
+        'headers': final_headers,
+        'data_rows': data_rows,
+        'groups': groups,
+        'contacts': contacts,
+        'skipped_dmp': skipped_dmp,
+        'base_date': base_date,
+        'hh': hh, 'mm': mm,
+        'send_mode': send_mode,
+        'fixed_tz': fixed_tz,
+        'visible_cols': visible_clean,
+        'title': title,
+        'pitch_name': pitch_name,
+    }
+
+
+def _create_mm_spreadsheet_v2(title, headers, data_rows, folder_id):
+    """Write a Google Sheet with arbitrary headers. Used by v37.3 export."""
+    svc = sheets.service
+    body = {
+        'properties': {'title': title},
+        'sheets': [
+            {'properties': {'title': 'Sheet1'}},
+            {'properties': {'title': 'Mail Merge Logs'}},
+        ],
+    }
+    spreadsheet = sheets._retry(lambda: svc.spreadsheets().create(body=body).execute())
+    new_id = spreadsheet['spreadsheetId']
+    sheets._retry(lambda: svc.spreadsheets().values().update(
+        spreadsheetId=new_id, range="'Sheet1'!A1",
+        valueInputOption='USER_ENTERED',
+        body={'values': [headers] + data_rows}
+    ).execute())
+    try:
+        if folder_id:
+            drive = _build_drive_service()
+            drive.files().update(fileId=new_id, addParents=folder_id, fields='id,parents').execute()
+    except Exception as e:
+        logging.warning('Mail merge sheet folder move failed: %s', e)
+    return {
+        'spreadsheet_id': new_id,
+        'url': 'https://docs.google.com/spreadsheets/d/' + new_id + '/edit',
+    }
+
+
+@app.route('/api/directory/mail-merge-export', methods=['POST'])
+@admin_required
+def api_mail_merge_export():
+    payload = request.get_json(silent=True) or {}
+    try:
+        built = _build_mm_export_rows(payload)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
     try:
         folder_id = _ensure_pitch_folder()
     except Exception as e:
         logging.warning('Pitch folder resolve failed: %s', e)
         folder_id = None
-    result = _create_mm_spreadsheet(title, data_rows, folder_id, extra_headers=extra_headers)
-    _log_mm_pitch(pitch_name, len(groups), result['url'])
+    result = _create_mm_spreadsheet_v2(built['title'], built['headers'],
+                                       built['data_rows'], folder_id)
+    _log_mm_pitch(built['pitch_name'], len(built['groups']), result['url'])
     all_ris = []
-    for g in groups:
+    for g in built['groups']:
         all_ris.extend(g.get('row_indices') or [])
-    _tag_and_stamp_mm_contacts(all_ris, 'Pitched: ' + pitch_name)
+    _tag_and_stamp_mm_contacts(all_ris, 'Pitched: ' + built['pitch_name'])
     return jsonify({
         'success': True,
         'url': result['url'],
         'spreadsheet_id': result['spreadsheet_id'],
-        'title': title,
-        'row_count': len(data_rows),
-        'contact_count': len(contacts),
-        'skipped_dont_mass_pitch': skipped_dmp,
-        'send_date': str(base_date),
-        'send_time': f'{hh:02d}:{mm:02d}',
-        'send_mode': send_mode,
+        'title': built['title'],
+        'headers': built['headers'],
+        'row_count': len(built['data_rows']),
+        'contact_count': len(built['contacts']),
+        'skipped_dont_mass_pitch': built['skipped_dmp'],
+        'send_date': str(built['base_date']),
+        'send_time': f"{built['hh']:02d}:{built['mm']:02d}",
+        'send_mode': built['send_mode'],
     })
+
+
+@app.route('/api/directory/mail-merge-export-csv', methods=['POST'])
+@admin_required
+def api_mail_merge_export_csv():
+    """v37.3: same export as mail-merge-export but returns a CSV download."""
+    from flask import Response
+    import csv, io
+    payload = request.get_json(silent=True) or {}
+    try:
+        built = _build_mm_export_rows(payload)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(built['headers'])
+    for row in built['data_rows']:
+        writer.writerow(row)
+    today_s = datetime.now().strftime('%Y-%m-%d')
+    safe_name = re.sub(r'[^A-Za-z0-9_\- ]+', '', built['pitch_name']).strip().replace(' ', '_') or 'Pitch'
+    filename = f"{safe_name}_{today_s}.csv"
+    _log_mm_pitch(built['pitch_name'], len(built['groups']), 'CSV download: ' + filename)
+    all_ris = []
+    for g in built['groups']:
+        all_ris.extend(g.get('row_indices') or [])
+    _tag_and_stamp_mm_contacts(all_ris, 'Pitched: ' + built['pitch_name'])
+    resp = Response(buf.getvalue(), mimetype='text/csv')
+    resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    resp.headers['X-Row-Count'] = str(len(built['data_rows']))
+    resp.headers['X-Contact-Count'] = str(len(built['contacts']))
+    resp.headers['X-Skipped-DMP'] = str(built['skipped_dmp'])
+    return resp
 
 
 # ==================== WORKS WITH (v36 relationships engine) ====================
@@ -2450,6 +2784,9 @@ def api_relationships_works_with_add():
         ok = relationships.add_link(id_a, id_b)
         if not ok:
             return jsonify({'error': 'Could not resolve one or both IDs'}), 400
+        # v37.3: recompute combined columns for the newly-linked group
+        threading.Thread(target=lambda: _recompute_for_group_members([id_a, id_b]),
+                         daemon=True).start()
         return jsonify({
             'success': True,
             'from_id': id_a,
@@ -2474,6 +2811,9 @@ def api_relationships_works_with_remove():
         return jsonify({'error': 'Both IDs required'}), 400
     try:
         relationships.remove_link(id_a, id_b)
+        # v37.3: recompute for both ex-partners (their groups likely differ now)
+        threading.Thread(target=lambda: _recompute_for_group_members([id_a, id_b]),
+                         daemon=True).start()
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2604,6 +2944,290 @@ def _ensure_personnel_column(name):
     ).execute())
     sheets._invalidate_cache('Personnel')
     return next_idx
+
+
+# ==================== V37.3 COMBINED COLUMNS WRITEBACK ====================
+COMBINED_FIRST_NAMES_COLUMN = 'Combined First Names [USE]'
+EMAILS_COMBINED_COLUMN = 'Emails Combined [USE]'
+_COMBINED_LOCK = threading.Lock()
+_COMBINED_STATE = {'running': False, 'last_run': None, 'updated': 0}
+
+
+def _find_personnel_col(headers, *names):
+    """Locate a Personnel column by any of the provided header names.
+    Matches against cleanH, cleanH_full, and case-insensitive contains."""
+    for n in names:
+        nl = n.strip().lower()
+        for i, h in enumerate(headers):
+            if cleanH(h).lower() == nl or cleanH_full(h).lower() == nl:
+                return i
+        for i, h in enumerate(headers):
+            if nl in cleanH(h).lower() or nl in cleanH_full(h).lower():
+                return i
+    return None
+
+
+def _format_combined_first_names(first_names):
+    """v37.3 combined first names format:
+       1:  'Luke'
+       2:  'Luke & Josie'
+       3:  'Luke, Josie & Emily'
+       4:  'Luke, Josie, Emily & Paul'
+       5+: 'Luke, Josie, Emily, Paul & <N-4> others'"""
+    names = [n.strip() for n in (first_names or []) if n and n.strip()]
+    if not names:
+        return ''
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f'{names[0]} & {names[1]}'
+    if len(names) == 3:
+        return f'{names[0]}, {names[1]} & {names[2]}'
+    if len(names) == 4:
+        return f'{names[0]}, {names[1]}, {names[2]} & {names[3]}'
+    head = ', '.join(names[:4])
+    return f'{head} & {len(names) - 4} others'
+
+
+def _parse_ww_ids(raw):
+    """Split a Works With cell into clean Airtable IDs."""
+    if not raw:
+        return []
+    s = str(raw).replace(',', '|')
+    return [p.strip() for p in s.split('|') if p.strip()]
+
+
+def _transitive_closure(seed, ww_map):
+    """BFS over the in-memory Works With adjacency map."""
+    seen = set()
+    stack = [seed]
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        for peer in ww_map.get(pid, ()):
+            if peer not in seen:
+                stack.append(peer)
+    return seen
+
+
+def _collect_group_info(personnel_id, data_by_id, ww_map):
+    """Return (ordered_first_names, ordered_emails) for the DIRECT Works With
+    peers of personnel_id (not transitive). Each contact's combined columns
+    therefore reflect the links stored on their own row — Luke sees the 5
+    people he listed plus himself, Josie who only lists Luke sees "Josie &
+    Luke". Uses in-memory adjacency so no Sheets API calls during recompute."""
+    peers = ww_map.get(personnel_id, [])
+    first_names = []
+    emails = []
+    seen_names = set()
+    for pid in peers:
+        d = data_by_id.get(pid)
+        if not d:
+            continue
+        name = (d.get('Name') or '').strip()
+        email = (d.get('Email') or '').strip()
+        if name:
+            first = name.split()[0]
+            if first and first.lower() not in seen_names:
+                first_names.append(first)
+                seen_names.add(first.lower())
+        if email and email not in emails:
+            emails.append(email)
+    return first_names, emails
+
+
+def _build_personnel_data_by_id(personnel_rows, headers):
+    """Build {airtable_id: {header: value}} for every Personnel row, using
+    cleanH-normalised keys so relationships.row_data-style access works."""
+    id_col = _find_personnel_col(headers, 'Airtable ID')
+    data_by_id = {}
+    if id_col is None:
+        return data_by_id
+    clean_headers = [cleanH_full(h) for h in headers]
+    for row in personnel_rows:
+        if id_col >= len(row):
+            continue
+        aid = str(row[id_col]).strip()
+        if not aid:
+            continue
+        data_by_id[aid] = {clean_headers[j]: (row[j] if j < len(row) else '')
+                          for j in range(len(clean_headers))}
+    return data_by_id
+
+
+def _recompute_combined_columns(row_indices=None):
+    """Compute 'Combined First Names [USE]' and 'Emails Combined [USE]' for
+    every (or given) Personnel row and write results back. Returns a dict
+    with counts. Safe to call from any thread; serialises on _COMBINED_LOCK."""
+    with _COMBINED_LOCK:
+        _COMBINED_STATE['running'] = True
+        try:
+            data = sheets.get_all_rows('Personnel')
+            if not data or len(data) < 2:
+                return {'updated': 0, 'error': 'Personnel sheet empty'}
+            headers = data[0]
+            rows = data[1:]
+            cfn_col = _find_personnel_col(headers, COMBINED_FIRST_NAMES_COLUMN, 'Combined First Names')
+            ec_col = _find_personnel_col(headers, EMAILS_COMBINED_COLUMN, 'Emails Combined')
+            if cfn_col is None:
+                cfn_col = _ensure_personnel_column(COMBINED_FIRST_NAMES_COLUMN)
+                headers = sheets.get_headers('Personnel')
+            if ec_col is None:
+                ec_col = _ensure_personnel_column(EMAILS_COMBINED_COLUMN)
+                headers = sheets.get_headers('Personnel')
+            id_col = _find_personnel_col(headers, 'Airtable ID')
+            name_col = _find_personnel_col(headers, 'Name')
+            email_col = _find_personnel_col(headers, 'Email')
+            if id_col is None or name_col is None or email_col is None:
+                return {'updated': 0, 'error': 'Missing Airtable ID / Name / Email column'}
+            data_by_id = _build_personnel_data_by_id(rows, headers)
+            # Build Works With adjacency map in memory — no per-row API reads.
+            ww_col = _find_personnel_col(headers, 'Works With')
+            ww_map = {}
+            if ww_col is not None:
+                for row in rows:
+                    if id_col < len(row):
+                        aid = str(row[id_col]).strip()
+                        if not aid:
+                            continue
+                        raw = str(row[ww_col]) if ww_col < len(row) else ''
+                        peers = [p for p in _parse_ww_ids(raw) if p in data_by_id and p != aid]
+                        if peers:
+                            ww_map[aid] = peers
+                # symmetrise
+                for owner, peers in list(ww_map.items()):
+                    for peer in peers:
+                        if owner not in ww_map.get(peer, []):
+                            ww_map.setdefault(peer, []).append(owner)
+            target = set(int(i) for i in (row_indices or [])) if row_indices else None
+            updates = []
+            scanned = 0
+            for idx, row in enumerate(rows, start=2):
+                if target is not None and idx not in target:
+                    continue
+                scanned += 1
+                aid = str(row[id_col]).strip() if id_col < len(row) else ''
+                own_name = str(row[name_col]).strip() if name_col < len(row) else ''
+                own_email = str(row[email_col]).strip() if email_col < len(row) else ''
+                own_first = own_name.split()[0] if own_name else ''
+                first_names = []
+                emails = []
+                if aid and aid in ww_map:
+                    first_names, emails = _collect_group_info(aid, data_by_id, ww_map)
+                # Own info takes priority at slot 0 so the contact sees their
+                # own name first in the greeting.
+                if own_first and own_first not in first_names:
+                    first_names.insert(0, own_first)
+                else:
+                    if own_first and first_names and first_names[0].lower() != own_first.lower():
+                        first_names = [own_first] + [n for n in first_names if n.lower() != own_first.lower()]
+                if own_email and own_email not in emails:
+                    emails.insert(0, own_email)
+                combined_names = _format_combined_first_names(first_names)
+                combined_emails = ', '.join(emails)
+                # Fallbacks: never write empty if the contact has own data
+                if not combined_names and own_first:
+                    combined_names = own_first
+                if not combined_emails and own_email:
+                    combined_emails = own_email
+                existing_cfn = str(row[cfn_col]).strip() if cfn_col < len(row) else ''
+                existing_ec = str(row[ec_col]).strip() if ec_col < len(row) else ''
+                if combined_names != existing_cfn:
+                    updates.append((idx, cfn_col + 1, combined_names))
+                if combined_emails != existing_ec:
+                    updates.append((idx, ec_col + 1, combined_emails))
+            if updates:
+                sheets.batch_update_cells('Personnel', updates)
+                sheets._invalidate_cache('Personnel')
+            _COMBINED_STATE['last_run'] = datetime.now().isoformat()
+            _COMBINED_STATE['updated'] = len(updates)
+            return {'updated': len(updates), 'scanned': scanned,
+                    'rows': len(rows), 'timestamp': _COMBINED_STATE['last_run']}
+        except Exception as e:
+            logging.exception('recompute-combined failed')
+            return {'updated': 0, 'error': str(e)}
+        finally:
+            _COMBINED_STATE['running'] = False
+
+
+def _recompute_combined_columns_safe():
+    """Startup-safe wrapper: catches and logs, never raises."""
+    try:
+        res = _recompute_combined_columns()
+        print(f"  Combined columns: {res.get('updated', 0)} cells updated of {res.get('scanned', 0)} rows")
+    except Exception as e:
+        print(f"  Combined columns recompute error: {e}")
+
+
+def _recompute_for_group_members(ids):
+    """Fast path: recompute only rows whose Airtable ID is in the transitive
+    closure of the given seed IDs. Used after Works With link add/remove."""
+    try:
+        seeds = [str(i).strip() for i in (ids or []) if i]
+        if not seeds:
+            return {'updated': 0}
+        data = sheets.get_all_rows('Personnel')
+        if not data or len(data) < 2:
+            return {'updated': 0}
+        headers = data[0]
+        rows_data = data[1:]
+        id_col = _find_personnel_col(headers, 'Airtable ID')
+        ww_col = _find_personnel_col(headers, 'Works With')
+        if id_col is None or ww_col is None:
+            return {'updated': 0}
+        ww_map = {}
+        id_to_row = {}
+        for idx, row in enumerate(rows_data, start=2):
+            if id_col >= len(row):
+                continue
+            aid = str(row[id_col]).strip()
+            if not aid:
+                continue
+            id_to_row[aid] = idx
+            raw = str(row[ww_col]) if ww_col < len(row) else ''
+            peers = [p for p in _parse_ww_ids(raw) if p != aid]
+            if peers:
+                ww_map[aid] = peers
+        for owner, peers in list(ww_map.items()):
+            for peer in peers:
+                if owner not in ww_map.get(peer, []):
+                    ww_map.setdefault(peer, []).append(owner)
+        expanded = set()
+        for seed in seeds:
+            expanded.update(_transitive_closure(seed, ww_map))
+        row_indices = [id_to_row[a] for a in expanded if a in id_to_row]
+        return _recompute_combined_columns(row_indices=row_indices)
+    except Exception as e:
+        logging.warning(f'_recompute_for_group_members failed: {e}')
+        return {'updated': 0, 'error': str(e)}
+
+
+@app.route('/api/personnel/recompute-combined', methods=['POST'])
+@login_required
+def api_personnel_recompute_combined():
+    """Recompute Combined First Names [USE] and Emails Combined [USE] for
+    every Personnel row. Payload may include {row_indices: [int]} to scope."""
+    payload = request.get_json(silent=True) or {}
+    scope = payload.get('row_indices') or None
+    try:
+        scope_ri = [int(i) for i in scope] if scope else None
+    except Exception:
+        scope_ri = None
+    result = _recompute_combined_columns(row_indices=scope_ri)
+    return jsonify(result)
+
+
+@app.route('/api/personnel/recompute-combined/status')
+@login_required
+def api_personnel_recompute_combined_status():
+    return jsonify({
+        'running': _COMBINED_STATE['running'],
+        'last_run': _COMBINED_STATE['last_run'],
+        'updated': _COMBINED_STATE['updated'],
+    })
+
 
 @app.route('/api/personnel/<int:row_index>/outreach-events', methods=['GET'])
 @login_required
@@ -3213,12 +3837,9 @@ def api_invoices():
             val = request.args.get(f'f{i}_val', '').strip()
             if col: adv_filters.append({'col':col,'op':op,'val':val})
         for f in adv_filters:
-            ci = None
-            for j, h in enumerate(headers):
-                if cleanH(h).lower() == f['col'].lower() or f['col'].lower() in cleanH(h).lower():
-                    ci = j; break
+            ci, cname = resolve_filter_col(headers, f['col'])
             if ci is not None:
-                indexed = apply_filter(indexed, ci, f['op'], f['val'])
+                indexed = apply_filter(indexed, ci, f['op'], f['val'], cname)
         records = []
         for ori, row in indexed:
             rec = {'_row_index': ori}
@@ -5504,6 +6125,48 @@ def not_found(e): return render_template('404.html'), 404
 @app.errorhandler(500)
 def server_error(e): return render_template('500.html'), 500
 
+
+# ==================== V37.3 FILTER SMOKE TESTS ====================
+def run_filter_smoke_tests():
+    """v37.3: fail-loud startup tests ensuring the filter system returns
+    non-zero results for Celina's pitching-critical queries. Raises
+    RuntimeError on any failure so Deploy.command aborts."""
+    data = sheets.get_all_rows('Personnel')
+    if not data or len(data) < 2:
+        raise RuntimeError('Personnel sheet empty; cannot run filter smoke tests')
+    headers = data[0]
+    rows = [(i + 2, r) for i, r in enumerate(data[1:])]
+    results = {}
+    def run(label, *filters):
+        current = rows
+        for col_name, op, val in filters:
+            ci, cname = resolve_filter_col(headers, col_name)
+            if ci is None:
+                raise RuntimeError(f"SMOKE FAIL [{label}]: column '{col_name}' not found")
+            current = apply_filter(current, ci, op, val, cname)
+        results[label] = len(current)
+        return len(current)
+
+    run('Country = UK', ('Country', 'is', 'UK'))
+    run('Country has any of (UK, US)', ('Country', 'has_any_of', 'UK,US'))
+    run('Field has any of (Record A&R)', ('Field', 'has_any_of', 'Record A&R'))
+    run('Country = UK AND Field has any of (MGMT, Publishing A&R, Record A&R, Writer MGMT)',
+        ('Country', 'is', 'UK'),
+        ('Field', 'has_any_of', 'MGMT,Publishing A&R,Record A&R,Writer MGMT'))
+    run('Works With is not empty', ('Works With', 'is_not_empty', ''))
+
+    print('  Filter smoke tests:')
+    failed = []
+    for label, count in results.items():
+        status = 'OK' if count > 0 else 'FAIL'
+        print(f'    [{status}] {label}: {count}')
+        if count == 0:
+            failed.append(label)
+    if failed:
+        raise RuntimeError('Filter smoke tests failed: ' + ' ; '.join(failed))
+    return results
+
+
 if __name__ == '__main__':
     print("Building ID resolver cache...")
     try: resolver.rebuild(); print(f"  Cached {len(resolver._cache)} record IDs")
@@ -5520,6 +6183,19 @@ if __name__ == '__main__':
         added = relationships.ensure_columns()
         print(f"  Columns: {added}")
     except Exception as e: print(f"  Warning: {e}")
+
+    print("Running v37.3 filter smoke tests (fail-loud)...")
+    try:
+        run_filter_smoke_tests()
+    except Exception as e:
+        print(f"\n  FATAL: {e}\n")
+        raise SystemExit(2)
+
+    print("Recomputing Combined First Names / Emails Combined (background)...")
+    try:
+        threading.Thread(target=lambda: _recompute_combined_columns_safe(), daemon=True).start()
+    except Exception as e:
+        print(f"  Warning: {e}")
 
     print("Scanning overdue invoices...")
     try:
