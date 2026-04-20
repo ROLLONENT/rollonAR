@@ -483,7 +483,8 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
           </div>
           <div class="prompt-actions">
             <button class="btn" onclick="document.getElementById('mm-modal')?.remove()">Cancel</button>
-            <button class="btn btn-purple" id="mm-create-btn">Create Mail Merge Sheet</button>
+            <button class="btn" id="mm-csv-btn" title="Download CSV to your machine (falls back when Drive is blocked)">Download CSV</button>
+            <button class="btn btn-purple" id="mm-create-btn">Create Google Sheet</button>
           </div>
         </div>
       </div>`;
@@ -518,28 +519,56 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     document.getElementById('mm-cooldown-days').addEventListener('change',refresh);
     refresh();
     setTimeout(()=>document.getElementById('mm-pitch-name')?.focus(),50);
-    document.getElementById('mm-create-btn').onclick=()=>{
+    const gatherPayload=()=>{
       const name=(document.getElementById('mm-pitch-name').value||'').trim();
-      if(!name){toast('Pitch Name is required','error');return}
       const gb=document.getElementById('mm-group-by').checked;
       const send_date=document.getElementById('mm-send-date').value;
       const send_time=document.getElementById('mm-send-time').value;
       const mode=document.getElementById('mm-send-mode').value;
       const fixed_tz=document.getElementById('mm-fixed-tz').value;
+      const includeDmp=document.getElementById('mm-include-dmp')?.checked||false;
+      return {pitch_name:name,group_by_company:gb,row_indices:selRows,
+        filter_args:fargs,send_date,send_time,send_mode:mode,fixed_tz,
+        visible_columns:visibleCols,include_dont_mass_pitch:includeDmp};
+    };
+    document.getElementById('mm-create-btn').onclick=()=>{
+      const payload=gatherPayload();
+      if(!payload.pitch_name){toast('Pitch Name is required','error');return}
       const btn=document.getElementById('mm-create-btn');
       btn.disabled=true;btn.textContent='Creating...';
-      const includeDmp=document.getElementById('mm-include-dmp')?.checked||false;
       fetch('/api/directory/mail-merge-export',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({pitch_name:name,group_by_company:gb,row_indices:selRows,
-          filter_args:fargs,send_date,send_time,send_mode:mode,fixed_tz,visible_columns:visibleCols,
-          include_dont_mass_pitch:includeDmp})
+        body:JSON.stringify(payload)
       }).then(r=>r.json()).then(d=>{
-        if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet';return}
-        toast('Mail Merge sheet created: '+d.row_count+' rows');
+        if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Create Google Sheet';return}
+        toast('Google Sheet created: '+d.row_count+' rows');
         document.getElementById('mm-modal')?.remove();
         if(d.url)window.open(d.url,'_blank');
         this.load();
-      }).catch(()=>{toast('Export failed','error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet'});
+      }).catch(()=>{toast('Export failed','error');btn.disabled=false;btn.textContent='Create Google Sheet'});
+    };
+    document.getElementById('mm-csv-btn').onclick=()=>{
+      const payload=gatherPayload();
+      if(!payload.pitch_name){toast('Pitch Name is required','error');return}
+      const btn=document.getElementById('mm-csv-btn');
+      btn.disabled=true;btn.textContent='Downloading...';
+      fetch('/api/directory/mail-merge-export-csv',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload)
+      }).then(r=>{
+        if(!r.ok){return r.json().then(j=>{throw new Error(j.error||'CSV export failed')})}
+        const cd=r.headers.get('Content-Disposition')||'';
+        const m=/filename="([^"]+)"/.exec(cd);
+        const fname=m?m[1]:'Pitch_'+new Date().toISOString().slice(0,10)+'.csv';
+        const rowCount=r.headers.get('X-Row-Count')||'?';
+        const skipped=r.headers.get('X-Skipped-DMP')||'0';
+        return r.blob().then(b=>{
+          const url=URL.createObjectURL(b);
+          const a=document.createElement('a');a.href=url;a.download=fname;document.body.appendChild(a);a.click();
+          setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},500);
+          toast('CSV downloaded: '+rowCount+' rows'+(skipped&&skipped!=='0'?` (${skipped} DMP skipped)`:''));
+          document.getElementById('mm-modal')?.remove();
+          this.load();
+        });
+      }).catch(e=>{toast((e&&e.message)||'CSV export failed','error');btn.disabled=false;btn.textContent='Download CSV'});
     };
   },
 

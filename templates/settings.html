@@ -15,6 +15,12 @@
     <div id="cache-status" style="margin-top:8px;font-size:12px;color:var(--text-dim)"></div>
   </div>
   <div class="settings-section">
+    <h3>Recompute Combined First Names / Emails</h3>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Rebuilds the Personnel "Combined First Names [USE]" and "Emails Combined [USE]" columns from the Works With graph. Auto-triggered on app startup and whenever a Works With link is added or removed. Run manually after bulk imports.</p>
+    <button class="btn" id="btn-recompute-combined" onclick="recomputeCombined()">Recompute Combined</button>
+    <div id="recompute-status" style="margin-top:8px;font-size:12px;color:var(--text-dim)"></div>
+  </div>
+  <div class="settings-section">
     <h3>Timezone Calculator</h3>
     <p style="color:var(--text-dim);font-size:12px;margin-bottom:8px">Calculate send time for a city.</p>
     <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
@@ -80,6 +86,20 @@
 function rebuildCache(){fetch('/api/resolver/rebuild',{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.success){document.getElementById('cache-status').textContent='Cache: '+d.cache_size+' IDs, '+d.cities+' cities';toast('Cache rebuilt')}
   else document.getElementById('cache-status').textContent='Error: '+(d.error||'')})}
+
+function recomputeCombined(){
+  const btn=document.getElementById('btn-recompute-combined');
+  const el=document.getElementById('recompute-status');
+  if(btn){btn.disabled=true;btn.textContent='Recomputing...'}
+  if(el)el.textContent='Running — this can take up to 60 seconds for 5,000 contacts.';
+  fetch('/api/personnel/recompute-combined',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){if(el)el.textContent='Error: '+d.error;toast('Recompute failed','error')}
+      else{if(el)el.textContent=`Updated ${d.updated||0} cells across ${d.scanned||0} rows (last run ${d.timestamp||''})`;toast(`Recomputed ${d.updated||0} cells`)}
+    })
+    .catch(()=>{if(el)el.textContent='Request failed';toast('Recompute failed','error')})
+    .finally(()=>{if(btn){btn.disabled=false;btn.textContent='Recompute Combined'}});
+}
 
 function calcTz(){fetch('/api/automate/timezone-calc',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({city:document.getElementById('tz-city').value,target_time:document.getElementById('tz-time').value,
