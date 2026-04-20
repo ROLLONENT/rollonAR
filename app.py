@@ -3203,6 +3203,81 @@ def _recompute_combined_columns_safe():
         print(f"  Combined columns recompute error: {e}")
 
 
+# v37.5: backfill Date/Time In LA / London to send email for legacy rows
+# whose Set Out Reach Date/Time pre-dates the on-edit recompute at line ~947.
+_SEND_TIMES_LOCK = threading.Lock()
+_SEND_TIMES_STATE = {'running': False, 'last_run': None, 'updated': 0, 'scanned': 0}
+
+
+def _backfill_send_times(row_indices=None, force=False):
+    with _SEND_TIMES_LOCK:
+        _SEND_TIMES_STATE['running'] = True
+        try:
+            data = sheets.get_all_rows('Personnel')
+            if not data or len(data) < 2:
+                return {'updated': 0, 'error': 'Personnel empty'}
+            headers = data[0]
+            rows = data[1:]
+            srt_col = find_col(headers, 'Set Out Reach Date/Time')
+            city_col = find_col(headers, 'City')
+            country_col = find_col(headers, 'Countries', 'Country')
+            la_col = find_col(headers, 'Date/Time In LA to send email')
+            ldn_col = find_col(headers, 'Date/Time In London to send email')
+            if srt_col is None or la_col is None:
+                return {'updated': 0, 'error': 'Missing Set Out Reach Date/Time or LA send-time column'}
+            target = set(int(i) for i in (row_indices or [])) if row_indices else None
+            updates = []
+            scanned = 0
+            tz_fallbacks = 0
+            for idx, row in enumerate(rows, start=2):
+                if target is not None and idx not in target:
+                    continue
+                raw = str(row[srt_col]).strip() if srt_col < len(row) else ''
+                if not raw:
+                    continue
+                scanned += 1
+                city = str(row[city_col]).strip() if city_col is not None and city_col < len(row) else ''
+                country = str(row[country_col]).strip() if country_col is not None and country_col < len(row) else ''
+                tz = tz_resolve(city, country, CITY_LOOKUP)
+                if not tz:
+                    tz = 'Europe/London'
+                    tz_fallbacks += 1
+                la_str = tz_to_la(raw, tz) or ''
+                ldn_str = ''
+                if ldn_col is not None:
+                    parsed = tz_parse_iso(raw)
+                    if parsed:
+                        ldn_str = tz_to_zone(parsed, tz, 'Europe/London') or ''
+                existing_la = str(row[la_col]).strip() if la_col < len(row) else ''
+                existing_ldn = str(row[ldn_col]).strip() if ldn_col is not None and ldn_col < len(row) else ''
+                if la_str and (force or la_str != existing_la):
+                    updates.append((idx, la_col + 1, la_str))
+                if ldn_col is not None and ldn_str and (force or ldn_str != existing_ldn):
+                    updates.append((idx, ldn_col + 1, ldn_str))
+            if updates:
+                sheets.batch_update_cells('Personnel', updates)
+                sheets._invalidate_cache('Personnel')
+            _SEND_TIMES_STATE['last_run'] = datetime.now().isoformat()
+            _SEND_TIMES_STATE['updated'] = len(updates)
+            _SEND_TIMES_STATE['scanned'] = scanned
+            return {'updated': len(updates), 'scanned': scanned,
+                    'tz_fallbacks': tz_fallbacks,
+                    'timestamp': _SEND_TIMES_STATE['last_run']}
+        except Exception as e:
+            logging.exception('backfill-send-times failed')
+            return {'updated': 0, 'error': str(e)}
+        finally:
+            _SEND_TIMES_STATE['running'] = False
+
+
+def _backfill_send_times_safe():
+    try:
+        res = _backfill_send_times()
+        print(f"  Send times: {res.get('updated', 0)} cells updated of {res.get('scanned', 0)} rows (tz fallbacks: {res.get('tz_fallbacks', 0)})")
+    except Exception as e:
+        print(f"  Send times backfill error: {e}")
+
+
 def _recompute_for_group_members(ids):
     """Fast path: recompute only rows whose Airtable ID is in the transitive
     closure of the given seed IDs. Used after Works With link add/remove."""
@@ -3268,6 +3343,30 @@ def api_personnel_recompute_combined_status():
         'running': _COMBINED_STATE['running'],
         'last_run': _COMBINED_STATE['last_run'],
         'updated': _COMBINED_STATE['updated'],
+    })
+
+
+@app.route('/api/personnel/recompute-send-times', methods=['POST'])
+@login_required
+def api_personnel_recompute_send_times():
+    payload = request.get_json(silent=True) or {}
+    scope = payload.get('row_indices') or None
+    force = bool(payload.get('force'))
+    try:
+        scope_ri = [int(i) for i in scope] if scope else None
+    except Exception:
+        scope_ri = None
+    return jsonify(_backfill_send_times(row_indices=scope_ri, force=force))
+
+
+@app.route('/api/personnel/recompute-send-times/status')
+@login_required
+def api_personnel_recompute_send_times_status():
+    return jsonify({
+        'running': _SEND_TIMES_STATE['running'],
+        'last_run': _SEND_TIMES_STATE['last_run'],
+        'updated': _SEND_TIMES_STATE['updated'],
+        'scanned': _SEND_TIMES_STATE['scanned'],
     })
 
 
@@ -6236,6 +6335,12 @@ if __name__ == '__main__':
     print("Recomputing Combined First Names / Emails Combined (background)...")
     try:
         threading.Thread(target=lambda: _recompute_combined_columns_safe(), daemon=True).start()
+    except Exception as e:
+        print(f"  Warning: {e}")
+
+    print("Backfilling Date/Time In LA / London to send email (background)...")
+    try:
+        threading.Thread(target=lambda: _backfill_send_times_safe(), daemon=True).start()
     except Exception as e:
         print(f"  Warning: {e}")
 
