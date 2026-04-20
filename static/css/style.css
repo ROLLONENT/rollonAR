@@ -675,6 +675,26 @@ td.cell-selected{
 }
 td[data-field]{cursor:cell}
 td[data-field]:focus{outline:none}
+td.cell-copied{animation:cellCopyFlash .6s ease-out}
+@keyframes cellCopyFlash{
+  0%{background:rgba(212,168,83,0.55)}
+  100%{background:var(--accent-dim,rgba(212,168,83,0.12))}
+}
+
+/* V36.1 live search highlighter */
+.data-grid mark.live-hl{
+  background:rgba(212,168,83,0.35);
+  color:inherit;
+  padding:0 1px;
+  border-radius:2px;
+}
+.data-grid mark.live-hl.live-hl-active{
+  background:#d4a853;
+  color:#131316;
+  outline:2px solid #d4a853;
+  outline-offset:1px;
+}
+.live-hl-counter{letter-spacing:0.3px}
 
 /* ================================================================
    FREEZE PANES

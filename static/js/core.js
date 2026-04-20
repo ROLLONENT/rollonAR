@@ -2248,6 +2248,208 @@ document.addEventListener('keydown',e=>{
   }
 });
 
+// ==================== V36.1 LIVE CELL HIGHLIGHTER ====================
+// Airtable-style Cmd+F highlighter wired on top of each grid's existing
+// search bar. Wraps every match in a <mark class="live-hl"> so visible
+// cells show gold overlays while the per-grid search still filters rows.
+(function(){
+  const HL_CLASS='live-hl';
+  const HL_ACTIVE='live-hl-active';
+  let _hlQuery='';
+  let _hlIdx=-1;
+  let _hlCounterEl=null;
+
+  function ensureCounter(inputEl){
+    if(!inputEl)return null;
+    if(_hlCounterEl&&_hlCounterEl.isConnected)return _hlCounterEl;
+    _hlCounterEl=document.createElement('span');
+    _hlCounterEl.className='live-hl-counter';
+    _hlCounterEl.style.cssText='position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text-ghost);pointer-events:none;font-family:var(--font-m)';
+    const p=inputEl.parentElement;
+    if(p){p.style.position=p.style.position||'relative';p.appendChild(_hlCounterEl)}
+    return _hlCounterEl;
+  }
+
+  function clearHighlights(root){
+    root=root||document.querySelector('.data-grid tbody');
+    if(!root)return;
+    root.querySelectorAll('mark.'+HL_CLASS).forEach(m=>{
+      const parent=m.parentNode;
+      while(m.firstChild)parent.insertBefore(m.firstChild,m);
+      parent.removeChild(m);
+      parent.normalize();
+    });
+  }
+
+  function highlightTextNode(node,q){
+    const txt=node.nodeValue;
+    const ql=q.toLowerCase();
+    const tl=txt.toLowerCase();
+    let idx=tl.indexOf(ql);
+    if(idx<0)return 0;
+    const frag=document.createDocumentFragment();
+    let cursor=0,count=0;
+    while(idx>=0){
+      if(idx>cursor)frag.appendChild(document.createTextNode(txt.slice(cursor,idx)));
+      const m=document.createElement('mark');
+      m.className=HL_CLASS;
+      m.textContent=txt.slice(idx,idx+q.length);
+      frag.appendChild(m);
+      count++;
+      cursor=idx+q.length;
+      idx=tl.indexOf(ql,cursor);
+    }
+    if(cursor<txt.length)frag.appendChild(document.createTextNode(txt.slice(cursor)));
+    node.parentNode.replaceChild(frag,node);
+    return count;
+  }
+
+  function walkAndHighlight(root,q){
+    if(!q||q.length<1)return 0;
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{
+      acceptNode(n){
+        if(!n.nodeValue||!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+        const p=n.parentElement;
+        if(!p)return NodeFilter.FILTER_REJECT;
+        const tag=p.tagName;
+        if(tag==='MARK'||tag==='INPUT'||tag==='TEXTAREA'||tag==='SCRIPT'||tag==='STYLE')return NodeFilter.FILTER_REJECT;
+        if(p.closest('.pill-x')||p.closest('.typeahead-item')||p.closest('.search-dropdown')||p.closest('.global-search-dropdown'))return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const targets=[];let n;while((n=walker.nextNode()))targets.push(n);
+    let total=0;
+    targets.forEach(tn=>{total+=highlightTextNode(tn,q)});
+    return total;
+  }
+
+  function applyHighlight(q){
+    _hlQuery=q||'';
+    _hlIdx=-1;
+    const body=document.querySelector('.data-grid tbody');
+    if(!body){if(_hlCounterEl)_hlCounterEl.textContent='';return 0}
+    clearHighlights(body);
+    const total=walkAndHighlight(body,_hlQuery);
+    if(_hlCounterEl)_hlCounterEl.textContent=total?'0 of '+total:'';
+    if(total>0)focusMatch(0);
+    return total;
+  }
+
+  function focusMatch(i){
+    const marks=document.querySelectorAll('.data-grid tbody mark.'+HL_CLASS);
+    if(!marks.length)return;
+    marks.forEach(m=>m.classList.remove(HL_ACTIVE));
+    const clamped=((i%marks.length)+marks.length)%marks.length;
+    const m=marks[clamped];
+    m.classList.add(HL_ACTIVE);
+    m.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+    _hlIdx=clamped;
+    if(_hlCounterEl)_hlCounterEl.textContent=(clamped+1)+' of '+marks.length;
+  }
+
+  function step(delta){
+    const marks=document.querySelectorAll('.data-grid tbody mark.'+HL_CLASS);
+    if(!marks.length)return;
+    focusMatch((_hlIdx<0?0:_hlIdx+delta));
+  }
+
+  function wireInput(){
+    const inp=document.getElementById('search-input');
+    if(!inp)return;
+    if(inp.dataset.liveHlWired)return;
+    inp.dataset.liveHlWired='1';
+    ensureCounter(inp);
+    inp.addEventListener('input',()=>{
+      // Re-apply highlights slightly after the grid re-renders from the page filter.
+      clearTimeout(inp._hlDeb);
+      inp._hlDeb=setTimeout(()=>applyHighlight(inp.value.trim()),260);
+    });
+    inp.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();step(e.shiftKey?-1:1)}
+      else if(e.key==='Escape'){e.preventDefault();inp.value='';applyHighlight('');inp.dispatchEvent(new Event('input'));inp.blur()}
+      else if(e.key==='ArrowDown'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();step(1)}
+      else if(e.key==='ArrowUp'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();step(-1)}
+    });
+  }
+
+  // Watch the grid for re-renders and re-apply highlight automatically.
+  const wrap=document.getElementById('grid-wrap');
+  if(wrap){
+    const obs=new MutationObserver(()=>{
+      wireInput();
+      if(_hlQuery)setTimeout(()=>applyHighlight(_hlQuery),50);
+    });
+    obs.observe(wrap,{childList:true,subtree:true});
+  }
+  document.addEventListener('DOMContentLoaded',wireInput);
+  // Also wire on load for pages that finish after DOMContentLoaded.
+  setTimeout(wireInput,500);
+
+  // Cmd+F / Ctrl+F on grid pages focuses the per-grid search bar.
+  document.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='f'){
+      const inp=document.getElementById('search-input');
+      if(inp){e.preventDefault();inp.focus();inp.select()}
+    }
+  });
+
+  window._liveHl={apply:applyHighlight,step,clear:()=>applyHighlight('')};
+})();
+
+// ==================== V36.1 ROW CONTEXT MENU: COPY ROW AS TSV ====================
+(function(){
+  function closeMenu(){document.getElementById('row-ctx-menu')?.remove()}
+  function onContextmenu(e){
+    const tr=e.target.closest('.data-grid tbody tr');
+    if(!tr)return;
+    // Ignore right-click on pill internals (keeps default browser menu accessible there)
+    if(e.target.closest('.pill-x')||e.target.closest('a'))return;
+    e.preventDefault();
+    closeMenu();
+    const ri=tr.dataset.ri;
+    const m=document.createElement('div');
+    m.id='row-ctx-menu';
+    m.style.cssText='position:fixed;left:'+e.clientX+'px;top:'+e.clientY+'px;z-index:2000;background:var(--bg-elev,#1b1b1f);border:1px solid var(--border,#2a2a30);border-radius:6px;padding:4px;min-width:180px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px';
+    m.innerHTML=`
+      <div class="row-ctx-item" data-action="tsv" style="padding:6px 10px;border-radius:4px;cursor:pointer">Copy Row as TSV</div>
+      <div class="row-ctx-item" data-action="names" style="padding:6px 10px;border-radius:4px;cursor:pointer">Copy Row as comma-separated</div>
+      <div class="row-ctx-item" data-action="json" style="padding:6px 10px;border-radius:4px;cursor:pointer">Copy Row as JSON</div>
+    `;
+    document.body.appendChild(m);
+    m.querySelectorAll('.row-ctx-item').forEach(it=>{
+      it.addEventListener('mouseenter',()=>it.style.background='var(--accent-dim,#d4a85322)');
+      it.addEventListener('mouseleave',()=>it.style.background='');
+      it.addEventListener('click',()=>{
+        const action=it.dataset.action;
+        const cached=cacheGet(parseInt(ri,10));
+        const cells=Array.from(tr.querySelectorAll('td[data-field]'));
+        const pairs=cells.map(c=>{
+          const field=c.dataset.field||'';
+          let v=cached?(cached[field]||''):(c.textContent||'').trim();
+          v=String(v).replace(/\t/g,' ').replace(/\r?\n/g,' ');
+          return [cleanH(field)||field,v];
+        });
+        let payload='';
+        if(action==='tsv'){
+          const headers=pairs.map(p=>p[0]).join('\t');
+          const row=pairs.map(p=>p[1]).join('\t');
+          payload=headers+'\n'+row;
+        } else if(action==='names'){
+          payload=pairs.map(p=>(p[1]||'').split(/\s*\|\s*/).join(', ')).filter(Boolean).join(', ');
+        } else {
+          const obj={};pairs.forEach(p=>obj[p[0]]=p[1]);
+          payload=JSON.stringify(obj,null,2);
+        }
+        navigator.clipboard.writeText(payload).then(()=>toast('Row copied'));
+        closeMenu();
+      });
+    });
+  }
+  document.addEventListener('contextmenu',onContextmenu);
+  document.addEventListener('click',closeMenu);
+  document.addEventListener('scroll',closeMenu,true);
+})();
+
 function createFieldWithType(table){
   const name=document.getElementById('new-field-name')?.value.trim();
   if(!name){toast('Field name is required','error');return}
