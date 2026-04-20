@@ -22,6 +22,12 @@ Things that came up autonomously during the v36 build. Celina to review.
 
 - Kept the legacy `/api/automate/works-with` endpoint as a shim that resolves names to IDs. Any page loaded before cache-busting still works. Safe to delete in v37.
 
+## v37.5 notes (2026-04-20 autonomous run)
+
+- Task brief "V36 Airtable parity full rebuild" was queued again and fired against a repo where v36 was already shipped (phases 1-8 all in prior commits, current HEAD v37.4.2). Run decision: do not re-execute completed work; verify current state; ship only the real code gap found.
+- One real gap identified and shipped as v37.5: startup backfill for `Date/Time In LA to send email` + `Date/Time In London to send email` on Personnel rows whose `Set Out Reach Date/Time` predated the on-edit recompute branch. Live result: 1,085 rows scanned, 2,170 cells filled.
+- Audit's "Works With is empty on every row" claim was based on a 13-row sample and is disproved in live data: 699 of 5,305 rows populated (13%). Remaining ~87% is a data-entry gap, not a code gap.
+
 ## Open for Celina's review
 
 - Do you want **automatic Tag addition** on Works With link (old behaviour added "Don't Mass Pitch" to the linked contact)? V36 does NOT auto-add this tag because "Works With" can also mean "co-writer, pitch with together" which is the opposite intent. The Phase 2 spec did not mention this tag. If you want it back, tell me in which direction (both sides? just the newly linked contact? opt-in toggle in the modal?).
