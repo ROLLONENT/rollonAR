@@ -287,6 +287,7 @@ const URL_FIELDS=['dropbox link','disco','song url','linkedin/socials','website'
 const DATE_FIELDS=['written date','release date','recording date','last modified','created',
   'last outreach','admin due date'];
 const DATETIME_FIELDS=['set out reach date/time'];
+const PLAINTEXT_FIELDS=['combined first names [use]','emails combined [use]'];
 // Convert ISO 'YYYY-MM-DDTHH:MM[:SS]' or 'DD/MM/YYYY HH:MM[:SS]' to display 'DD/MM/YYYY HH:MM'
 function _dtToDisplay(v){if(!v)return '';const s=String(v).trim();
   let m=s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);if(m)return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
@@ -365,6 +366,8 @@ function fieldType(header){
     };
     if(typeMap[ov])return typeMap[ov];
   }
+  // Mail Merge feed columns: plain comma-separated text, never pills
+  if(PLAINTEXT_FIELDS.includes(h))return 'plaintext';
   // Set Out Reach Date/Time needs HH:MM, handled before generic date match
   if(DATETIME_FIELDS.some(d=>h.includes(d)))return 'datetime';
   // Airtable lookup fields [LU] always contain linked record names
@@ -395,6 +398,7 @@ function renderCell(header,value,ri,table){
     case 'url':return renderUrls(v);
     case 'date':return `<span class="cell-date">${esc(v)}</span>`;
     case 'datetime':return `<span class="cell-date">${esc(_dtToDisplay(v))}</span>`;
+    case 'plaintext':return `<span class="cell-text">${esc(v)}</span>`;
     case 'long':return `<span class="cell-text" title="${escA(v)}">${esc(v.length>60?v.substring(0,60)+'...':v)}</span>`;
     case 'contact':return renderContactPill(v);
     case 'id':return `<span class="cell-text" style="font-family:var(--font-m);font-size:10px;color:var(--text-ghost)">${esc(v.substring(0,12))}</span>`;
@@ -600,6 +604,7 @@ function renderDetailValue(val,type){
     case 'url':return renderUrls(val);
     case 'date':return `<span class="cell-date">${esc(val)}</span>`;
     case 'datetime':return `<span class="cell-date">${esc(_dtToDisplay(val))}</span>`;
+    case 'plaintext':return `<span class="cell-text" style="white-space:pre-wrap">${esc(val)}</span>`;
     case 'long':return `<span class="cell-text" style="white-space:pre-wrap">${esc(val)}</span>`;
     case 'link':return renderLinkedPillsNav(val);
     case 'contact':return renderContactPill(val);
@@ -1663,7 +1668,7 @@ function _isGroupLeader(rec){
 }
 
 // ==================== GRID BUILDER (V2 with inline edit + header dropdowns) ====================
-const _ED_TYPES=['tag','link','autocomplete','field_type','text','date','datetime','contact','url','long','duration','number','currency','percent','rating'];
+const _ED_TYPES=['tag','link','autocomplete','field_type','text','date','datetime','plaintext','contact','url','long','duration','number','currency','percent','rating'];
 function buildGridV2(cid,headers,records,table,visCols,sortField,sortDir,onSort,selRows){
   const c=document.getElementById(cid);if(!c)return;cacheStore(records,table);
   const shown=visCols||headers.map(h=>cleanH(h));
