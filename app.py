@@ -1,5 +1,5 @@
 """
-ROLLON AR v37.4.1 - A&R Operating System (Airtable parity rebuild)
+ROLLON AR v37.4.2 - A&R Operating System (Airtable parity rebuild)
 Google Sheets master. No external dependencies.
 """
 

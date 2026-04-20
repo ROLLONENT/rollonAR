@@ -40,7 +40,7 @@
       <button class="btn" id="btn-sort" onclick="D.showSortPanel()">↕ Sort</button>
       <button class="btn" id="btn-group" onclick="D.showGroupPanel()">▦ Group</button>
       <button class="btn btn-accent" onclick="D.newRecord()">+ New Contact</button>
-      <button class="btn" id="pitch-btn" onclick="D.sendToPitch()" style="display:none">🚀 Send to Pitch</button>
+      <button class="btn" id="pitch-btn" onclick="D.sendToPitch(event)" style="display:none">🚀 Send to Pitch</button>
       <button class="btn" id="btn-group-emails" onclick="D.toggleGroupEmailRows()" title="Collapse linked contacts into one pitch row (Works With overrides Company)">👥 Group Email Rows</button>
       <button class="btn btn-sm" onclick="D.openSetSendTime()" title="Set target local send time for selected contacts">⏱ Set Send Time</button>
       {% if session.get('role') == 'admin' %}
@@ -641,13 +641,18 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     this.load();
   },
 
-  sendToPitch(){
+  sendToPitch(ev){
+    if(ev&&ev.preventDefault)ev.preventDefault();
     const nameH=this.headers.find(h=>cleanH(h).toLowerCase()==='name');
     const emailH=this.headers.find(h=>cleanH(h).toLowerCase()==='email');
     const cityH=this.headers.find(h=>cleanH(h).toLowerCase()==='city');
     const contacts=this.lastRecords.map(r=>({name:nameH?r[nameH]:'',email:emailH?r[emailH]:'',city:cityH?r[cityH]:'',row_index:r._row_index})).filter(c=>c.email);
-    sessionStorage.setItem('pitch_contacts',JSON.stringify(contacts));
-    window.location.href='/pitch?from=directory';
+    // localStorage (not sessionStorage) so the new tab can consume the handoff.
+    localStorage.setItem('pitch_contacts',JSON.stringify(contacts));
+    // Open in a new tab so directory filter state stays intact in the current tab.
+    const win=window.open('/pitch?from=directory','_blank');
+    if(!win){toast('Popup blocked. Allow popups for this site to open Pitch Builder.','error');return}
+    toast(`Sent ${contacts.length} contact${contacts.length===1?'':'s'} to Pitch (new tab)`);
   }
 };
 
