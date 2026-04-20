@@ -22,6 +22,7 @@
     {% if session.get('role') == 'admin' %}
     <a href="/invoices" class="nav-link {% if request.path == '/invoices' %}active{% endif %}">Invoices</a>
     <a href="/scout" class="nav-link {% if request.path == '/scout' %}active{% endif %}">Scout<span id="scout-badge" class="scout-badge" style="display:none"></span></a>
+    <a href="/pitch-intelligence" class="nav-link {% if request.path == '/pitch-intelligence' %}active{% endif %}">Intel</a>
     {% endif %}
     <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">Settings</a>
   </div>

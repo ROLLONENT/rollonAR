@@ -2082,6 +2082,67 @@ def _filter_dont_mass_pitch(contacts, include_dmp):
     kept = [c for c in contacts if not c.get('dont_mass_pitch')]
     return kept, len(contacts) - len(kept)
 
+
+def _compute_cooldown_conflicts(contacts, days):
+    """v37: return list of contacts whose Last Outreach falls within `days`
+    of today. `days` <=0 disables the check. Each conflict dict carries
+    {name, email, last_outreach, days_since}."""
+    try:
+        days = int(days or 0)
+    except Exception:
+        days = 0
+    if days <= 0:
+        return []
+    today = datetime.now().date()
+    out = []
+    try:
+        data = sheets.get_all_rows('Personnel')
+        if not data:
+            return []
+        headers = data[0]
+        rows = data[1:]
+        def col(name):
+            for j, h in enumerate(headers):
+                if cleanH(h).lower() == name.lower():
+                    return j
+            return None
+        lc = col('Last Outreach')
+        nc = col('Name')
+        ec = col('Email')
+        if lc is None:
+            return []
+        ris = {int(c['row_index']) for c in contacts if c.get('row_index')}
+        for idx, r in enumerate(rows, start=2):
+            if idx not in ris:
+                continue
+            raw = str(r[lc]).strip() if lc < len(r) else ''
+            if not raw:
+                continue
+            try:
+                lo_date = None
+                for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y'):
+                    try:
+                        lo_date = datetime.strptime(raw, fmt).date()
+                        break
+                    except Exception:
+                        continue
+                if not lo_date:
+                    continue
+                delta = (today - lo_date).days
+                if 0 <= delta <= days:
+                    out.append({
+                        'row_index': idx,
+                        'name': str(r[nc]).strip() if nc is not None and nc < len(r) else '',
+                        'email': str(r[ec]).strip() if ec is not None and ec < len(r) else '',
+                        'last_outreach': raw,
+                        'days_since': delta,
+                    })
+            except Exception:
+                continue
+    except Exception as e:
+        logging.warning('cooldown conflict scan failed: %s', e)
+    return out
+
 def _group_mm_contacts(contacts, group_by_company):
     """v36: delegates to relationships.group_for_pitch when group_by_company is true.
 
@@ -2199,13 +2260,18 @@ def api_mail_merge_preview():
     payload = request.get_json(silent=True) or {}
     group_by = bool(payload.get('group_by_company', True))
     include_dmp = bool(payload.get('include_dont_mass_pitch', False))
+    cooldown_days = int(payload.get('cooldown_days', 14) or 0)
     contacts = _resolve_mm_rows(payload)
     contacts, skipped_dmp = _filter_dont_mass_pitch(contacts, include_dmp)
+    conflicts = _compute_cooldown_conflicts(contacts, cooldown_days)
     rows = _group_mm_contacts(contacts, group_by)
     return jsonify({
         'contact_count': len(contacts),
         'row_count': len(rows),
         'skipped_dont_mass_pitch': skipped_dmp,
+        'cooldown_days': cooldown_days,
+        'cooldown_conflicts': conflicts[:50],
+        'cooldown_conflict_count': len(conflicts),
     })
 
 @app.route('/api/directory/mail-merge-export', methods=['POST'])
@@ -2510,6 +2576,303 @@ def api_relationships_group_leader_clear():
         return jsonify({'success': True, **res})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ==================== V37 OUTREACH EVENTS ====================
+# Structured append-only log of outreach events per Personnel row. Stored
+# as JSON array in the "Outreach Events" column. Every entry carries
+# {ts, event_type, summary, warmth?, pitch_id?, tags_added?}. The raw
+# free-text "Outreach Notes" column is preserved alongside for legacy.
+
+OUTREACH_EVENTS_COLUMN = 'Outreach Events'
+VALID_EVENT_TYPES = ('pitch_sent', 'reply_received', 'meeting', 'note', 'cooldown_skipped')
+VALID_WARMTHS = ('cold', 'warming', 'warm', 'hot', 'established')
+
+def _ensure_personnel_column(name):
+    """Append a Personnel column if it does not exist. Returns 0-based index."""
+    headers = sheets.get_headers('Personnel')
+    for i, h in enumerate(headers):
+        if cleanH(h).lower() == name.lower():
+            return i
+    next_idx = len(headers)
+    col_letter = sheets._col_to_letter(next_idx + 1)
+    sheets._retry(lambda: sheets.service.spreadsheets().values().update(
+        spreadsheetId=sheets.spreadsheet_id,
+        range=f"'Personnel'!{col_letter}1",
+        valueInputOption='USER_ENTERED',
+        body={'values': [[name]]}
+    ).execute())
+    sheets._invalidate_cache('Personnel')
+    return next_idx
+
+@app.route('/api/personnel/<int:row_index>/outreach-events', methods=['GET'])
+@login_required
+def api_outreach_events_get(row_index):
+    try:
+        col_idx = _ensure_personnel_column(OUTREACH_EVENTS_COLUMN)
+        row = sheets.get_row('Personnel', row_index)
+        raw = row[col_idx] if col_idx < len(row) else ''
+        try:
+            events = json.loads(raw) if raw else []
+            if not isinstance(events, list):
+                events = []
+        except Exception:
+            events = []
+        return jsonify({'row_index': row_index, 'events': events})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/personnel/<int:row_index>/outreach-events', methods=['POST'])
+@login_required
+def api_outreach_events_append(row_index):
+    d = request.json or {}
+    etype = (d.get('event_type') or '').strip()
+    summary = (d.get('summary') or '').strip()
+    warmth = (d.get('warmth') or '').strip()
+    pitch_id = (d.get('pitch_id') or '').strip()
+    tags_added = d.get('tags_added') or []
+    if etype and etype not in VALID_EVENT_TYPES:
+        return jsonify({'error': 'event_type must be one of ' + ', '.join(VALID_EVENT_TYPES)}), 400
+    if warmth and warmth not in VALID_WARMTHS:
+        return jsonify({'error': 'warmth must be one of ' + ', '.join(VALID_WARMTHS)}), 400
+    entry = {
+        'ts': datetime.utcnow().isoformat() + 'Z',
+        'event_type': etype or 'note',
+        'summary': summary,
+    }
+    if warmth: entry['warmth'] = warmth
+    if pitch_id: entry['pitch_id'] = pitch_id
+    if tags_added: entry['tags_added'] = list(tags_added)
+    try:
+        col_idx = _ensure_personnel_column(OUTREACH_EVENTS_COLUMN)
+        row = sheets.get_row('Personnel', row_index)
+        raw = row[col_idx] if col_idx < len(row) else ''
+        try:
+            events = json.loads(raw) if raw else []
+            if not isinstance(events, list):
+                events = []
+        except Exception:
+            events = []
+        events.append(entry)
+        sheets.update_cell('Personnel', row_index, col_idx + 1, json.dumps(events, separators=(',', ':')))
+        return jsonify({'success': True, 'entry': entry, 'count': len(events)})
+    except Exception as e:
+        logging.warning('outreach-events append failed: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== V37 TAG LIBRARY ====================
+# Categorised tag vocabulary stored in a "Tag Library" sheet tab. Columns
+# are Category, Tag, Color, Description. Categories used by the app:
+# Warmth, Fit, Status, Relationship, Timing. Captain can add more.
+
+TAG_LIBRARY_SHEET = 'Tag Library'
+TAG_LIBRARY_HEADERS = ['Category', 'Tag', 'Color', 'Description']
+TAG_LIBRARY_SEEDS = [
+    ('Warmth', 'Cold', '#6b7280', 'No prior contact or long dormant.'),
+    ('Warmth', 'Warming', '#f59e0b', 'Recent intro or first reply.'),
+    ('Warmth', 'Warm', '#eab308', 'Ongoing conversation, responsive.'),
+    ('Warmth', 'Hot', '#ef4444', 'Actively engaged, short cycle.'),
+    ('Warmth', 'Established', '#10b981', 'Long-term working relationship.'),
+    ('Status', 'Pitched', '#8b5cf6', 'Pitch currently live.'),
+    ('Status', 'Replied', '#22c55e', 'Replied to the most recent pitch.'),
+    ('Status', 'Passed', '#6b7280', 'Explicit pass on the current pitch.'),
+    ('Status', 'Blocked', '#ef4444', 'Do not contact.'),
+    ('Relationship', 'Celina Relationship', '#10b981', 'Celina has a personal relationship.'),
+    ('Relationship', 'Sonia Relationship', '#6366f1', 'Sonia has a personal relationship.'),
+    ('Fit', 'Dance Pitch', '#ec4899', 'Good target for Dance pitches.'),
+    ('Fit', 'Pop Pitch', '#8b5cf6', 'Good target for Pop pitches.'),
+    ('Fit', 'Sync Pitch', '#0d9488', 'Good target for Sync pitches.'),
+    ('Timing', 'Writing Trip', '#ca8a04', 'Currently in a writing-trip window.'),
+]
+
+def _ensure_tag_library_tab():
+    try:
+        existing = sheets.get_all_rows(TAG_LIBRARY_SHEET)
+        if existing and len(existing) >= 1:
+            return
+    except Exception:
+        pass
+    try:
+        sheets._retry(lambda: sheets.service.spreadsheets().batchUpdate(
+            spreadsheetId=sheets.spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': TAG_LIBRARY_SHEET}}}]}
+        ).execute())
+    except Exception as e:
+        logging.info('Tag Library tab may already exist: %s', e)
+    seed_rows = [list(r) for r in TAG_LIBRARY_SEEDS]
+    sheets._retry(lambda: sheets.service.spreadsheets().values().update(
+        spreadsheetId=sheets.spreadsheet_id,
+        range=f"'{TAG_LIBRARY_SHEET}'!A1",
+        valueInputOption='USER_ENTERED',
+        body={'values': [list(TAG_LIBRARY_HEADERS)] + seed_rows}
+    ).execute())
+    sheets._invalidate_cache(TAG_LIBRARY_SHEET)
+
+@app.route('/api/tag-library', methods=['GET'])
+@login_required
+def api_tag_library_get():
+    try:
+        _ensure_tag_library_tab()
+        data = sheets.get_all_rows(TAG_LIBRARY_SHEET) or []
+        if not data or len(data) < 2:
+            return jsonify({'tags': []})
+        headers = data[0]
+        idx = {h.lower(): i for i, h in enumerate(headers)}
+        tags = []
+        for r in data[1:]:
+            def g(k):
+                i = idx.get(k.lower())
+                return (r[i] if i is not None and i < len(r) else '').strip()
+            tags.append({
+                'category': g('Category'),
+                'tag': g('Tag'),
+                'color': g('Color'),
+                'description': g('Description'),
+            })
+        return jsonify({'tags': tags})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tag-library', methods=['POST'])
+@admin_required
+def api_tag_library_append():
+    d = request.json or {}
+    row = [
+        (d.get('category') or '').strip(),
+        (d.get('tag') or '').strip(),
+        (d.get('color') or '').strip(),
+        (d.get('description') or '').strip(),
+    ]
+    if not row[0] or not row[1]:
+        return jsonify({'error': 'category and tag required'}), 400
+    try:
+        _ensure_tag_library_tab()
+        sheets.batch_append(TAG_LIBRARY_SHEET, [row])
+        return jsonify({'success': True, 'entry': {
+            'category': row[0], 'tag': row[1], 'color': row[2], 'description': row[3]}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== V37 PITCH INTELLIGENCE DASHBOARD ====================
+# 10 metrics computed on demand from the live Personnel + Pitch Log + Songs
+# sheets. Not cached beyond the existing 120s sheets cache.
+
+def _parse_dt(s, fmts=('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y')):
+    for f in fmts:
+        try:
+            return datetime.strptime(s, f).date()
+        except Exception:
+            continue
+    return None
+
+@app.route('/api/pitch-intelligence', methods=['GET'])
+@admin_required
+def api_pitch_intelligence():
+    today = datetime.now().date()
+    window_days = int(request.args.get('window_days', 30) or 30)
+    try:
+        personnel = sheets.get_all_rows('Personnel') or []
+        p_headers = personnel[0] if personnel else []
+        p_rows = personnel[1:] if personnel else []
+        def p_col(name):
+            for j, h in enumerate(p_headers):
+                if cleanH(h).lower() == name.lower():
+                    return j
+            return None
+        tags_col = p_col('Tags')
+        last_col = p_col('Last Outreach')
+        field_col = p_col('Field')
+        country_col = p_col('Countries')
+        group_leader_col = p_col('Group Leader')
+
+        total_contacts = len(p_rows)
+        recently_pitched = 0  # within window_days
+        leaders = 0
+        dmp_count = 0
+        field_counts = {}
+        country_counts = {}
+        warmth_counts = {w: 0 for w in VALID_WARMTHS}
+        for r in p_rows:
+            # Last Outreach
+            if last_col is not None and last_col < len(r):
+                raw = str(r[last_col]).strip()
+                if raw:
+                    d = _parse_dt(raw)
+                    if d and (today - d).days <= window_days:
+                        recently_pitched += 1
+            # Tags
+            if tags_col is not None and tags_col < len(r):
+                parts = [t.strip() for t in str(r[tags_col]).split('|') if t.strip()]
+                if "Don't Mass Pitch" in parts:
+                    dmp_count += 1
+                for p in parts:
+                    pl = p.lower()
+                    if pl in warmth_counts:
+                        warmth_counts[pl] += 1
+            # Group Leader
+            if group_leader_col is not None and group_leader_col < len(r) and str(r[group_leader_col]).strip():
+                # A row with any Group Leader value is part of a managed group
+                # We count rows that ARE leaders (own ID == leader)
+                ac_idx = p_col('Airtable ID')
+                if ac_idx is not None and ac_idx < len(r):
+                    if str(r[ac_idx]).strip() == str(r[group_leader_col]).strip():
+                        leaders += 1
+            if field_col is not None and field_col < len(r):
+                for f in [x.strip() for x in str(r[field_col]).split('|') if x.strip()]:
+                    field_counts[f] = field_counts.get(f, 0) + 1
+            if country_col is not None and country_col < len(r):
+                cv = str(r[country_col]).strip()
+                if cv:
+                    try:
+                        cv_resolved = resolver.resolve_value('', cv)
+                    except Exception:
+                        cv_resolved = cv
+                    country_counts[cv_resolved or cv] = country_counts.get(cv_resolved or cv, 0) + 1
+
+        # Pitch Log summary
+        try:
+            pl = sheets.get_all_rows('Pitch Log') or []
+            pl_rows = pl[1:] if pl else []
+            pitches_in_window = 0
+            for r in pl_rows:
+                ds = str(r[0]).strip() if len(r) > 0 else ''
+                d = _parse_dt(ds)
+                if d and (today - d).days <= window_days:
+                    pitches_in_window += 1
+            total_pitches = len(pl_rows)
+        except Exception:
+            pitches_in_window = 0
+            total_pitches = 0
+
+        top_fields = sorted(field_counts.items(), key=lambda x: -x[1])[:5]
+        top_countries = sorted(country_counts.items(), key=lambda x: -x[1])[:5]
+        return jsonify({
+            'window_days': window_days,
+            'as_of': today.isoformat(),
+            'metrics': {
+                'total_contacts': total_contacts,
+                'recently_pitched': recently_pitched,
+                'pitches_in_window': pitches_in_window,
+                'total_pitches_logged': total_pitches,
+                'group_leaders': leaders,
+                'dont_mass_pitch': dmp_count,
+                'warmth_breakdown': warmth_counts,
+                'top_fields': [{'name': n, 'count': c} for n, c in top_fields],
+                'top_countries': [{'name': n, 'count': c} for n, c in top_countries],
+                'coverage_ratio': round(recently_pitched / total_contacts, 3) if total_contacts else 0,
+            },
+        })
+    except Exception as e:
+        logging.warning('pitch-intelligence failed: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/pitch-intelligence')
+@admin_required
+def page_pitch_intelligence():
+    return render_template('pitch_intelligence.html')
 
 
 # ==================== GLOBAL SEARCH (v36 Phase 6.5) ====================
