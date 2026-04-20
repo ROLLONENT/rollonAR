@@ -17,6 +17,10 @@ from modules.lyric_doc import auto_generate_and_link as generate_lyric_doc
 from modules.scout_engine import (ScoutDiscovery, get_roster_artists, get_artist_profile,
     get_artist_songs, find_warm_connections as scout_warm_connections)
 from modules.relationships import RelationshipsEngine, LINK_TYPES as RELATIONSHIP_LINK_TYPES
+from modules.timezone_map import (resolve_timezone as tz_resolve,
+    parse_iso as tz_parse_iso, to_la_from_sheet as tz_to_la,
+    to_zone_wall_clock as tz_to_zone, LA as TZ_LA,
+    CITY_IANA_MAP, COUNTRY_DEFAULT_TZ)
 
 logging.basicConfig(filename='rollon.log', level=logging.WARNING,
     format='%(asctime)s %(levelname)s %(message)s')
@@ -1852,36 +1856,32 @@ def api_directory_bulk_tag():
     return api_bulk_update()
 
 
-# ==================== MAIL MERGE EXPORT (v35.6) ====================
-# YAMM-compatible Google Sheet export for manual Gmail mail merge.
-# Sender timezone assumed Europe/London (Celina's local time).
+# ==================== MAIL MERGE EXPORT (v36) ====================
+# Builds a Google Sheet formatted for Mail Merge with Attachments (Digital
+# Inspiration, Amit Agarwal) - the tool Celina runs inside Gmail.
+# Scheduled Date column is emitted in America/Los_Angeles to match the
+# [Use] Date Time LA to Send Email convention in the Personnel sheet.
 
 PITCH_FOLDER_NAME = 'ROLLON AR Pitches'
 MAIL_MERGE_HEADERS = ['First Name', 'Email Address', 'Scheduled Date', 'File Attachments', 'Mail Merge Status']
 
-def _timezone_for_city(city):
-    if not city:
+def _timezone_for_city(city, country=''):
+    """v36: resolve IANA zone via modules.timezone_map (90+ city map +
+    Cities.Timezone aliases + country default)."""
+    if not city and not country:
         return ''
-    entry = CITY_LOOKUP.get(str(city).strip().lower(), {})
-    return (entry.get('timezone') or '').strip()
+    return tz_resolve(city, country, CITY_LOOKUP)
 
-def _format_mm_schedule(target_hour, target_minute, tz_str, base_date):
-    """Return DD/MM/YYYY HH:MM:SS for {base_date} at {hour:minute} recipient local,
-    converted to Europe/London sender local time. Falls back to TIMEZONE_OFFSETS."""
-    try:
-        from zoneinfo import ZoneInfo
-        tz_name = tz_str if tz_str else 'Europe/London'
-        recip = ZoneInfo(tz_name)
-        sender = ZoneInfo('Europe/London')
-        local_dt = datetime(base_date.year, base_date.month, base_date.day,
-                            target_hour, target_minute, 0, tzinfo=recip)
-        return local_dt.astimezone(sender).strftime('%d/%m/%Y %H:%M:%S')
-    except Exception:
-        recip_off = TIMEZONE_OFFSETS.get(tz_str, 0) if tz_str else 0
-        delta_min = int((0 - recip_off) * 60)
-        dt = datetime(base_date.year, base_date.month, base_date.day, target_hour, target_minute, 0)
-        dt = dt + timedelta(minutes=delta_min)
-        return dt.strftime('%d/%m/%Y %H:%M:%S')
+def _format_mm_schedule(target_hour, target_minute, tz_str, base_date, sender_tz=TZ_LA):
+    """v36: converts wall-clock in recipient tz to DD/MM/YYYY HH:MM:SS in sender_tz.
+    Sender defaults to America/Los_Angeles so the output lands in the
+    '[Use] Date Time LA to Send Email' column expected by Mail Merge with
+    Attachments. Pass sender_tz='Europe/London' for the [London] variant."""
+    recipient_tz = tz_str if tz_str else sender_tz
+    return tz_to_zone(
+        (base_date.year, base_date.month, base_date.day, target_hour, target_minute),
+        recipient_tz, sender_tz,
+    )
 
 def _ensure_pitch_log_tab():
     try:
@@ -1972,7 +1972,10 @@ def _ensure_pitch_folder():
     ).execute()
     return folder['id']
 
-def _create_mm_spreadsheet(title, data_rows, folder_id):
+def _create_mm_spreadsheet(title, data_rows, folder_id, extra_headers=None):
+    """Create a new Google Sheet and populate it with the required 5 columns
+    plus any extra columns passed in. Caller is responsible for ensuring
+    each row has len(MAIL_MERGE_HEADERS) + len(extra_headers) cells."""
     svc = sheets.service
     body = {
         'properties': {'title': title},
@@ -1983,10 +1986,11 @@ def _create_mm_spreadsheet(title, data_rows, folder_id):
     }
     spreadsheet = sheets._retry(lambda: svc.spreadsheets().create(body=body).execute())
     new_id = spreadsheet['spreadsheetId']
+    headers = list(MAIL_MERGE_HEADERS) + (list(extra_headers) if extra_headers else [])
     sheets._retry(lambda: svc.spreadsheets().values().update(
         spreadsheetId=new_id, range="'Sheet1'!A1",
         valueInputOption='USER_ENTERED',
-        body={'values': [MAIL_MERGE_HEADERS] + data_rows}
+        body={'values': [headers] + data_rows}
     ).execute())
     try:
         if folder_id:
@@ -2164,18 +2168,81 @@ def api_mail_merge_export():
     payload = request.get_json(silent=True) or {}
     pitch_name = (payload.get('pitch_name') or '').strip()
     group_by = bool(payload.get('group_by_company', True))
+    send_date_s = (payload.get('send_date') or '').strip()
+    send_time_s = (payload.get('send_time') or '').strip()
+    send_mode = (payload.get('send_mode') or 'recipient_local').strip()
+    fixed_tz = (payload.get('fixed_tz') or 'Europe/London').strip()
+    visible_cols = payload.get('visible_columns') or []
     if not pitch_name:
         return jsonify({'error': 'Pitch name is required'}), 400
     contacts = _resolve_mm_rows(payload)
     if not contacts:
         return jsonify({'error': 'No contacts with email found in the selection'}), 400
     groups = _group_mm_contacts(contacts, group_by)
+
     today = datetime.now().date()
-    tomorrow = today + timedelta(days=1)
+    if send_date_s:
+        try:
+            y, m, d = [int(p) for p in send_date_s.split('-')]
+            base_date = datetime(y, m, d).date()
+        except Exception:
+            base_date = today + timedelta(days=1)
+    else:
+        base_date = today + timedelta(days=1)
+    if send_time_s:
+        try:
+            hh, mm = [int(p) for p in send_time_s.split(':')]
+        except Exception:
+            hh, mm = 10, 22
+    else:
+        hh, mm = 10, 22
+
+    # Resolve which extra columns the user wants (visible Directory columns)
+    extra_headers = []
+    extra_col_indices = []
+    if visible_cols:
+        excluded = {h.lower() for h in MAIL_MERGE_HEADERS}
+        excluded.update({'first name', 'email', 'email address', 'scheduled date'})
+        try:
+            p_headers_all = sheets.get_headers('Personnel')
+        except Exception:
+            p_headers_all = []
+        p_data_rows = None
+        for col_name in visible_cols:
+            cn = str(col_name).strip()
+            if not cn or cn.lower() in excluded:
+                continue
+            for i, h in enumerate(p_headers_all):
+                if cleanH(h).lower() == cn.lower():
+                    extra_headers.append(cn)
+                    extra_col_indices.append(i)
+                    break
+        if extra_col_indices:
+            pd = sheets.get_all_rows('Personnel')
+            p_data_rows = pd[1:] if pd else []
+
     data_rows = []
     for g in groups:
-        scheduled = _format_mm_schedule(10, 22, g.get('tz', ''), tomorrow)
-        data_rows.append([g['first_name'], g['email'], scheduled, '', ''])
+        if send_mode == 'fixed':
+            scheduled = _format_mm_schedule(hh, mm, fixed_tz, base_date, sender_tz=TZ_LA)
+        else:
+            recipient_tz = g.get('tz', '') or fixed_tz
+            scheduled = _format_mm_schedule(hh, mm, recipient_tz, base_date, sender_tz=TZ_LA)
+        greeting_first = (g.get('greeting') or '').replace('Hi ', '', 1) or g.get('first_name', '')
+        row = [greeting_first, g['email'], scheduled, '', '']
+        # Append extras pulled from Personnel for this group (joined across members)
+        if extra_col_indices and p_data_rows is not None:
+            for col_idx in extra_col_indices:
+                joined = []
+                for ri in (g.get('row_indices') or []):
+                    idx = ri - 2
+                    if 0 <= idx < len(p_data_rows):
+                        v = p_data_rows[idx][col_idx] if col_idx < len(p_data_rows[idx]) else ''
+                        v = str(v).strip()
+                        if v and v not in joined:
+                            joined.append(v)
+                row.append(' | '.join(joined))
+        data_rows.append(row)
     data_rows.sort(key=lambda r: r[2])
     title = pitch_name + ' - ' + today.strftime('%b %d %Y')
     try:
@@ -2183,7 +2250,7 @@ def api_mail_merge_export():
     except Exception as e:
         logging.warning('Pitch folder resolve failed: %s', e)
         folder_id = None
-    result = _create_mm_spreadsheet(title, data_rows, folder_id)
+    result = _create_mm_spreadsheet(title, data_rows, folder_id, extra_headers=extra_headers)
     _log_mm_pitch(pitch_name, len(groups), result['url'])
     all_ris = []
     for g in groups:
@@ -2196,6 +2263,9 @@ def api_mail_merge_export():
         'title': title,
         'row_count': len(data_rows),
         'contact_count': len(contacts),
+        'send_date': str(base_date),
+        'send_time': f'{hh:02d}:{mm:02d}',
+        'send_mode': send_mode,
     })
 
 
@@ -2331,6 +2401,149 @@ def api_relationships_lookup(personnel_id):
         return jsonify(relationships.lookup_all_relationships(personnel_id))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+def _recompute_la_times(row_indices=None):
+    """Internal helper: recompute [Use] Date Time LA to Send Email + London
+    variants for the given row_indices (or every row if None). Returns
+    {'updated': int, 'miss_count': int, 'misses': [...]}."""
+    row_indices = set(int(i) for i in (row_indices or []) if i)
+    data = sheets.get_all_rows('Personnel')
+    if not data or len(data) < 2:
+        return {'updated': 0, 'miss_count': 0, 'misses': []}
+    headers = data[0]
+    srt_col = find_col(headers, 'Set Out Reach Date/Time')
+    la_col = find_col(headers, 'Date/Time In LA to send email')
+    ldn_col = find_col(headers, 'Date/Time In London to send email')
+    city_col = find_col(headers, 'City')
+    country_col = find_col(headers, 'Countries', 'Country')
+    if srt_col is None or la_col is None:
+        raise RuntimeError('Required columns missing on Personnel')
+    updates = []
+    misses = []
+    for idx, row in enumerate(data[1:], start=2):
+        if row_indices and idx not in row_indices:
+            continue
+        raw = str(row[srt_col]).strip() if srt_col < len(row) else ''
+        if not raw:
+            continue
+        city = str(row[city_col]).strip() if city_col is not None and city_col < len(row) else ''
+        country = str(row[country_col]).strip() if country_col is not None and country_col < len(row) else ''
+        tz = tz_resolve(city, country, CITY_LOOKUP)
+        if not tz:
+            misses.append({'row': idx, 'city': city, 'country': country})
+            continue
+        la_str = tz_to_la(raw, tz)
+        if la_str:
+            updates.append((idx, la_col + 1, la_str))
+            if ldn_col is not None:
+                parsed = tz_parse_iso(raw)
+                if parsed:
+                    ldn_str = tz_to_zone(parsed, tz, 'Europe/London')
+                    updates.append((idx, ldn_col + 1, ldn_str))
+    if updates:
+        sheets.batch_update_cells('Personnel', updates)
+    return {
+        'updated': len({u[0] for u in updates}),
+        'miss_count': len(misses),
+        'misses': misses[:50],
+    }
+
+
+@app.route('/api/directory/recompute-la-times', methods=['POST'])
+@login_required
+def api_directory_recompute_la_times():
+    d = request.json or {}
+    try:
+        result = _recompute_la_times(d.get('row_indices') or [])
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logging.warning(f'recompute-la-times failed: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/directory/bulk-set-send-time', methods=['POST'])
+@login_required
+def api_directory_bulk_set_send_time():
+    """Set the Set Out Reach Date/Time for a list of row_indices.
+
+    Payload:
+      row_indices: [int, ...] (required)
+      date:  'YYYY-MM-DD'
+      time:  'HH:MM'
+      mode:  'recipient_local' (each contact reads in their own tz) OR
+             'fixed'            (all contacts get same wall-clock in fixed_tz)
+      fixed_tz: IANA zone (when mode=fixed)
+
+    When mode=recipient_local we store the raw 'YYYY-MM-DDTHH:MM:00' and the
+    recompute pass treats it as a wall-clock in the contact's own timezone.
+    When mode=fixed we convert to each contact's local wall-clock before
+    storing, so the recompute pass produces a consistent LA time.
+    """
+    d = request.json or {}
+    row_indices = [int(i) for i in (d.get('row_indices') or []) if i]
+    date_str = (d.get('date') or '').strip()
+    time_str = (d.get('time') or '').strip()
+    mode = (d.get('mode') or 'recipient_local').strip()
+    fixed_tz = (d.get('fixed_tz') or 'Europe/London').strip()
+    if not row_indices or not date_str or not time_str:
+        return jsonify({'error': 'row_indices, date, time required'}), 400
+    try:
+        y, m, day = [int(p) for p in date_str.split('-')]
+        hh, mm = [int(p) for p in time_str.split(':')]
+    except Exception:
+        return jsonify({'error': 'Invalid date or time format'}), 400
+    try:
+        data = sheets.get_all_rows('Personnel')
+        if not data or len(data) < 2:
+            return jsonify({'error': 'Personnel empty'}), 500
+        headers = data[0]
+        srt_col = find_col(headers, 'Set Out Reach Date/Time')
+        city_col = find_col(headers, 'City')
+        country_col = find_col(headers, 'Countries', 'Country')
+        if srt_col is None:
+            return jsonify({'error': 'Set Out Reach Date/Time column missing'}), 400
+        updates = []
+        recompute_rows = []
+        from zoneinfo import ZoneInfo
+        for idx in row_indices:
+            if idx < 2 or idx > len(data):
+                continue
+            row = data[idx - 1]
+            if mode == 'fixed':
+                try:
+                    src = ZoneInfo(fixed_tz)
+                    city = str(row[city_col]).strip() if city_col is not None and city_col < len(row) else ''
+                    country = str(row[country_col]).strip() if country_col is not None and country_col < len(row) else ''
+                    recip_tz = tz_resolve(city, country, CITY_LOOKUP) or fixed_tz
+                    dst = ZoneInfo(recip_tz)
+                    src_dt = datetime(y, m, day, hh, mm, 0, tzinfo=src)
+                    dst_dt = src_dt.astimezone(dst)
+                    iso = dst_dt.strftime('%Y-%m-%dT%H:%M:00')
+                except Exception:
+                    iso = f'{y:04d}-{m:02d}-{day:02d}T{hh:02d}:{mm:02d}:00'
+            else:
+                iso = f'{y:04d}-{m:02d}-{day:02d}T{hh:02d}:{mm:02d}:00'
+            updates.append((idx, srt_col + 1, iso))
+            recompute_rows.append(idx)
+        if updates:
+            sheets.batch_update_cells('Personnel', updates)
+        recompute_result = {'updated': 0, 'miss_count': 0}
+        if recompute_rows:
+            sheets._invalidate_cache('Personnel')
+            try:
+                recompute_result = _recompute_la_times(recompute_rows)
+            except Exception as e:
+                logging.warning(f'recompute inside bulk-set: {e}')
+        return jsonify({
+            'success': True,
+            'set': len(updates),
+            'mode': mode,
+            'recompute': recompute_result,
+        })
+    except Exception as e:
+        logging.warning(f'bulk-set-send-time failed: {e}')
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/relationships/types', methods=['GET'])
 @login_required

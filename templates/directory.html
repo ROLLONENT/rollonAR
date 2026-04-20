@@ -41,8 +41,10 @@
       <button class="btn" id="btn-group" onclick="D.showGroupPanel()">▦ Group</button>
       <button class="btn btn-accent" onclick="D.newRecord()">+ New Contact</button>
       <button class="btn" id="pitch-btn" onclick="D.sendToPitch()" style="display:none">🚀 Send to Pitch</button>
+      <button class="btn" id="btn-group-emails" onclick="D.toggleGroupEmailRows()" title="Collapse linked contacts into one pitch row (Works With overrides Company)">👥 Group Email Rows</button>
+      <button class="btn btn-sm" onclick="D.openSetSendTime()" title="Set target local send time for selected contacts">⏱ Set Send Time</button>
       {% if session.get('role') == 'admin' %}
-      <button class="btn btn-purple" onclick="D.openMailMergeExport()" title="Create YAMM-ready Google Sheet for Gmail mail merge">✉ Export to Mail Merge</button>
+      <button class="btn btn-purple" onclick="D.openMailMergeExport()" title="Create Mail Merge-ready Google Sheet for Gmail">✉ Export to Mail Merge</button>
       {% endif %}
       <button class="btn btn-sm" onclick="showImportDialog('directory')" title="Import CSV">📥</button>
       <button class="btn btn-sm" onclick="exportViewCSV('directory')" title="Export current view">📤</button>
@@ -130,26 +132,76 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     this.filters.forEach((f,i)=>{if(f.col)url+=`&f${i}_col=${encodeURIComponent(f.col)}&f${i}_op=${f.op}&f${i}_val=${encodeURIComponent(f.val||'')}`});
     fetch(url).then(r=>r.json()).then(d=>{
       if(d.error){toast(d.error,'error');return}
-      this.headers=d.headers;this.lastRecords=d.records;window._currentHeaders=d.headers;window._currentTable='directory';
+      this.headers=d.headers;window._currentHeaders=d.headers;window._currentTable='directory';
       document.getElementById('record-count').textContent=`${d.total} contacts`;
       if(!this.visibleCols.length){
         const ac=d.headers.map(h=>cleanH(h)).filter(c=>c.toLowerCase()!=='airtable id'&&c.toLowerCase()!=='system id');
         this.visibleCols=ac.slice(0,10);this.allCols=ac;
       }
       document.getElementById('pitch-btn').style.display=this.filters.length>0?'':'none';
-      if(this.group&&d.records.length>0){
-        buildGroupedGrid('grid-wrap',d.headers,d.records,'directory',this.visibleCols,this.group,this.sortField,this.sortDir,(field)=>{
-          if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
-          else{this.sortField=field;this.sortDir='asc'}this.load()},this.groupDir);
+      const renderWith=(records)=>{
+        this.lastRecords=records;
+        if(this.group&&records.length>0){
+          buildGroupedGrid('grid-wrap',d.headers,records,'directory',this.visibleCols,this.group,this.sortField,this.sortDir,(field)=>{
+            if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
+            else{this.sortField=field;this.sortDir='asc'}this.load()},this.groupDir);
+        } else {
+          buildGridV2('grid-wrap',d.headers,records,'directory',this.visibleCols,this.sortField,this.sortDir,(field)=>{
+            if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
+            else{this.sortField=field;this.sortDir='asc'}this.load()},window._selectedRows);
+        }
+        buildPagination('pagination',d.page,d.total_pages,d.total,(p)=>{this.page=p;this.load()});
+        this._autoSave();
+        this._updateToolbar();
+      };
+      if(this.groupEmailRows){
+        this._applyGroupEmailRows(d.records,d.headers).then(renderWith).catch(()=>renderWith(d.records));
       } else {
-        buildGridV2('grid-wrap',d.headers,d.records,'directory',this.visibleCols,this.sortField,this.sortDir,(field)=>{
-          if(this.sortField===field)this.sortDir=this.sortDir==='asc'?'desc':'asc';
-          else{this.sortField=field;this.sortDir='asc'}this.load()},window._selectedRows);
+        renderWith(d.records);
       }
-      buildPagination('pagination',d.page,d.total_pages,d.total,(p)=>{this.page=p;this.load()});
-      this._autoSave();
-      this._updateToolbar();
     }).catch(()=>{document.getElementById('grid-wrap').innerHTML='<div class="loading" style="color:var(--danger)">Failed to load.</div>'});
+  },
+
+  _applyGroupEmailRows(records,headers){
+    const idHeader=headers.find(h=>cleanH(h).toLowerCase()==='airtable id');
+    if(!idHeader)return Promise.resolve(records);
+    const byId={};
+    const ids=[];
+    for(const r of records){
+      const rid=(r[idHeader]||'').trim();
+      if(rid){byId[rid]=r;ids.push(rid)}
+    }
+    if(!ids.length)return Promise.resolve(records);
+    return fetch('/api/relationships/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})})
+      .then(r=>r.json()).then(d=>{
+        const groups=d.groups||[];
+        const nameH=headers.find(h=>cleanH(h).toLowerCase()==='name');
+        const emailH=headers.find(h=>cleanH(h).toLowerCase()==='email');
+        const cfnH=headers.find(h=>cleanH(h).toLowerCase().includes('combined first names'));
+        const ecH=headers.find(h=>cleanH(h).toLowerCase().includes('emails combined'));
+        const companyH=headers.find(h=>cleanH(h).toLowerCase()==='company');
+        const out=[];
+        for(const g of groups){
+          const firstId=g.ids[0];
+          const base=byId[firstId];
+          if(!base)continue;
+          const synth=Object.assign({},base);
+          if(g.count>1){
+            if(nameH)synth[nameH]=`👥 ${g.greeting.replace('Hi ','')} (${g.count})`;
+            if(cfnH)synth[cfnH]=(g.first_names||[]).join(', ');
+            if(ecH)synth[ecH]=(g.ids||[]).map(id=>(byId[id]&&emailH)?byId[id][emailH]:'').filter(Boolean).join(', ');
+            if(companyH){
+              const companies=[];
+              for(const id of g.ids){if(byId[id]&&companyH){const v=byId[id][companyH];if(v&&!companies.includes(v))companies.push(v)}}
+              synth[companyH]=companies.join(' / ');
+            }
+            synth._grouped=true;
+            synth._group_count=g.count;
+          }
+          out.push(synth);
+        }
+        return out;
+      });
   },
 
   _updateToolbar(){
@@ -358,7 +410,8 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     }
   },
 
-  // v35.6 Export current selection or filtered view to a YAMM-ready Google Sheet.
+  // v36 Export current selection or filtered view to a Mail Merge-ready Google Sheet
+  // (compatible with Mail Merge with Attachments by Digital Inspiration).
   _mmFilterArgs(){
     const a={};
     if(this.search)a.search=this.search;
@@ -372,19 +425,50 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
     const selRows=Array.from(window._selectedRows||[]);
     const srcLabel=selRows.length?(selRows.length+' selected rows'):'current filtered view';
     const fargs=this._mmFilterArgs();
+    const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
+    const tomorrowIso=tomorrow.toISOString().slice(0,10);
+    const defaultName=(this.currentView&&this.currentView!=='All')?this.currentView:'';
+    const visibleCols=[...(this.visibleCols||[])];
     const html=`
       <div class="prompt-overlay" id="mm-modal">
-        <div class="prompt-box" style="width:440px">
+        <div class="prompt-box" style="width:520px">
           <h3>Export to Mail Merge</h3>
           <div class="prompt-fields">
             <label>Pitch Name <span style="color:var(--danger)">*</span></label>
-            <input id="mm-pitch-name" class="prompt-input" placeholder="EMMMA London Writing Sessions">
+            <input id="mm-pitch-name" class="prompt-input" placeholder="EMMMA London Writing Sessions" value="${esc(defaultName)}">
             <label style="margin-top:14px">Source</label>
             <div style="color:var(--text-dim);font-size:12px;padding:4px 0">${esc(srcLabel)}</div>
             <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;font-weight:400">
               <input type="checkbox" id="mm-group-by" checked style="width:16px;height:16px;cursor:pointer">
-              <span>Group by Company (MGMT / Label / Publisher)</span>
+              <span>Group by Works With, then Company (MGMT / Label / Publisher)</span>
             </label>
+            <div style="display:flex;gap:10px;margin-top:14px">
+              <div style="flex:1">
+                <label>Send Date</label>
+                <input type="date" id="mm-send-date" class="prompt-input" value="${tomorrowIso}">
+              </div>
+              <div style="flex:1">
+                <label>Send Time (HH:MM)</label>
+                <input type="time" id="mm-send-time" class="prompt-input" value="11:06">
+              </div>
+            </div>
+            <label style="margin-top:12px">Send Mode</label>
+            <select id="mm-send-mode" class="prompt-input">
+              <option value="recipient_local">Recipient local (auto-stagger per timezone)</option>
+              <option value="fixed">Fixed timezone (same absolute moment everywhere)</option>
+            </select>
+            <div id="mm-tz-wrap" style="display:none;margin-top:10px">
+              <label>Fixed timezone</label>
+              <select id="mm-fixed-tz" class="prompt-input">
+                <option value="Europe/London">Europe/London</option>
+                <option value="America/Los_Angeles">America/Los_Angeles</option>
+                <option value="America/New_York">America/New_York</option>
+                <option value="America/Chicago">America/Chicago</option>
+                <option value="Europe/Paris">Europe/Paris</option>
+                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                <option value="Australia/Sydney">Australia/Sydney</option>
+              </select>
+            </div>
             <div id="mm-preview" style="margin-top:14px;padding:10px;background:var(--bg-surface);border-radius:var(--r-md);font-size:12px;color:var(--text-dim);text-align:center">Loading preview...</div>
           </div>
           <div class="prompt-actions">
@@ -394,6 +478,9 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
         </div>
       </div>`;
     document.body.insertAdjacentHTML('beforeend',html);
+    const mdSel=document.getElementById('mm-send-mode');
+    const tzWrap=document.getElementById('mm-tz-wrap');
+    mdSel.addEventListener('change',()=>{tzWrap.style.display=mdSel.value==='fixed'?'block':'none'});
     const refresh=()=>{
       const gb=document.getElementById('mm-group-by');if(!gb)return;
       const el=document.getElementById('mm-preview');if(el)el.textContent='Loading preview...';
@@ -402,7 +489,7 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       }).then(r=>r.json()).then(d=>{
         const e2=document.getElementById('mm-preview');if(!e2)return;
         if(d.error){e2.textContent='Preview failed: '+d.error;return}
-        e2.innerHTML=`<strong style="color:var(--text)">${d.contact_count}</strong> contacts to <strong style="color:var(--text)">${d.row_count}</strong> rows after grouping`;
+        e2.innerHTML=`<strong style="color:var(--text)">${d.contact_count}</strong> contacts collapse to <strong style="color:var(--text)">${d.row_count}</strong> pitch rows`;
       }).catch(()=>{const e2=document.getElementById('mm-preview');if(e2)e2.textContent='Preview failed'});
     };
     document.getElementById('mm-group-by').addEventListener('change',refresh);
@@ -412,10 +499,15 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
       const name=(document.getElementById('mm-pitch-name').value||'').trim();
       if(!name){toast('Pitch Name is required','error');return}
       const gb=document.getElementById('mm-group-by').checked;
+      const send_date=document.getElementById('mm-send-date').value;
+      const send_time=document.getElementById('mm-send-time').value;
+      const mode=document.getElementById('mm-send-mode').value;
+      const fixed_tz=document.getElementById('mm-fixed-tz').value;
       const btn=document.getElementById('mm-create-btn');
       btn.disabled=true;btn.textContent='Creating...';
       fetch('/api/directory/mail-merge-export',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({pitch_name:name,group_by_company:gb,row_indices:selRows,filter_args:fargs})
+        body:JSON.stringify({pitch_name:name,group_by_company:gb,row_indices:selRows,
+          filter_args:fargs,send_date,send_time,send_mode:mode,fixed_tz,visible_columns:visibleCols})
       }).then(r=>r.json()).then(d=>{
         if(d.error){toast(d.error,'error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet';return}
         toast('Mail Merge sheet created: '+d.row_count+' rows');
@@ -424,6 +516,75 @@ const D={page:1,perPage:999,search:'',sortField:'',sortDir:'asc',filters:[],allC
         this.load();
       }).catch(()=>{toast('Export failed','error');btn.disabled=false;btn.textContent='Create Mail Merge Sheet'});
     };
+  },
+
+  openSetSendTime(){
+    const selRows=Array.from(window._selectedRows||[]);
+    if(!selRows.length){toast('Select at least one row first','error');return}
+    const today=new Date();
+    const iso=today.toISOString().slice(0,10);
+    const html=`
+      <div class="prompt-overlay" id="sst-modal">
+        <div class="prompt-box" style="width:460px">
+          <h3>Set Send Time · ${selRows.length} contacts</h3>
+          <div class="prompt-fields">
+            <label>Date</label>
+            <input type="date" id="sst-date" class="prompt-input" value="${iso}">
+            <label style="margin-top:10px">Time (HH:MM)</label>
+            <input type="time" id="sst-time" class="prompt-input" value="11:06">
+            <label style="margin-top:14px">Mode</label>
+            <select id="sst-mode" class="prompt-input">
+              <option value="recipient_local">Recipient local (each contact reads in their own tz)</option>
+              <option value="fixed">Fixed timezone (same absolute moment everywhere)</option>
+            </select>
+            <div id="sst-tz-wrap" style="display:none;margin-top:10px">
+              <label>Fixed timezone</label>
+              <select id="sst-fixed-tz" class="prompt-input">
+                <option value="Europe/London">Europe/London</option>
+                <option value="America/Los_Angeles">America/Los_Angeles</option>
+                <option value="America/New_York">America/New_York</option>
+                <option value="America/Chicago">America/Chicago</option>
+                <option value="Europe/Paris">Europe/Paris</option>
+                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                <option value="Australia/Sydney">Australia/Sydney</option>
+              </select>
+            </div>
+          </div>
+          <div class="prompt-actions">
+            <button class="btn" onclick="document.getElementById('sst-modal')?.remove()">Cancel</button>
+            <button class="btn btn-accent" id="sst-go">Set</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+    const md=document.getElementById('sst-mode');
+    const tzWrap=document.getElementById('sst-tz-wrap');
+    md.addEventListener('change',()=>{tzWrap.style.display=md.value==='fixed'?'block':'none'});
+    document.getElementById('sst-go').onclick=()=>{
+      const date=document.getElementById('sst-date').value;
+      const time=document.getElementById('sst-time').value;
+      const mode=document.getElementById('sst-mode').value;
+      const fixed_tz=document.getElementById('sst-fixed-tz').value;
+      if(!date||!time){toast('Date and time required','error');return}
+      fetch('/api/directory/bulk-set-send-time',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({row_indices:selRows,date,time,mode,fixed_tz})})
+      .then(r=>r.json()).then(d=>{
+        if(d.error){toast(d.error,'error');return}
+        toast(`Set ${d.set}, LA times recomputed: ${d.recompute?.updated||0}, misses: ${d.recompute?.miss_count||0}`);
+        document.getElementById('sst-modal')?.remove();
+        this.load();
+      });
+    };
+  },
+
+  toggleGroupEmailRows(){
+    this.groupEmailRows=!this.groupEmailRows;
+    const btn=document.getElementById('btn-group-emails');
+    if(btn){
+      btn.classList.toggle('btn-accent',this.groupEmailRows);
+      btn.textContent=this.groupEmailRows?'👥 Group Email Rows (ON)':'👥 Group Email Rows';
+    }
+    this.load();
   },
 
   sendToPitch(){
