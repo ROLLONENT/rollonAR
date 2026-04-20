@@ -5,6 +5,8 @@ credentials.json
 __pycache__/
 *.pyc
 rollon.log
+rollon.log.*
+rollon_restart.log
 .DS_Store
 .env
 .edit_tokens.json

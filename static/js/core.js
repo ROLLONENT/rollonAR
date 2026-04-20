@@ -810,15 +810,44 @@ function dirActions(rec,headers){
   const field=fv(rec,headers,'field'),company=fv(rec,headers,'mgmt company')||fv(rec,headers,'record label')||fv(rec,headers,'publishing company');
   // Quick info badge
   if(field)b+=`<span class="admin-badge" title="Field: ${escA(field)}">${esc(field.split('|')[0].trim())}</span>`;
+  // v37.1: contact responsiveness score badge - lazy fetched after render
+  b+=`<span id="dir-score-${ri}" class="dir-score-badge" style="display:none"></span>`;
   if(email)b+=`<button class="btn btn-sm" onclick="copyText('${escA(email)}')" title="Copy email address to clipboard">📋 Email</button>`;
   if(phone)b+=`<button class="btn btn-sm" onclick="copyText('${escA(phone)}')" title="Copy phone number">📋 Phone</button>`;
   if(linkedin)b+=`<button class="btn btn-sm" onclick="window.open('${escA(linkedin)}','_blank')" title="Open LinkedIn or website">🔗 Profile</button>`;
   b+=`<button class="btn btn-sm" onclick="logOutreach(${ri})" title="Log today as last outreach date">📅 Log Outreach</button>`;
+  b+=`<button class="btn btn-sm btn-accent" onclick="window.location.href='/pitch/${ri}'" title="Open the pitch composer with smart suggestions">✉️ Compose Pitch</button>`;
   b+=`<button class="btn btn-sm" onclick="viewPersonSongs('${escA(name)}')" title="View all songs this person is credited on">🎵 Songs</button>`;
   b+=`<button class="btn btn-sm" onclick="worksWithUI(${ri},'${escA(name)}')" title="See and edit who this person works with">🔗 Works With</button>`;
   b+=`<button class="btn btn-sm" onclick="relationshipsUI(${ri},'${escA(name)}')" title="Manage Manager / Agent / A&R / Publishing relationships">🕸️ Relationships</button>`;
   if(company)b+=`<button class="btn btn-sm" onclick="navToRecord('${escA(company)}')" title="Open company record">🏢 ${esc(company.split('|')[0].trim().substring(0,15))}</button>`;
+  setTimeout(()=>loadDirScore(ri,name),50);
   return b;
+}
+
+// v37.1: read outreach events for a contact and surface a compact
+// responsiveness pill (X of Y replies) in the directory detail modal.
+function loadDirScore(ri,name){
+  const el=document.getElementById('dir-score-'+ri);if(!el)return;
+  fetch('/api/personnel/'+ri+'/outreach-events').then(r=>r.json()).then(d=>{
+    const evs=d.events||[];if(!evs.length){return}
+    const today=new Date();
+    let sentY=0,replyY=0,sentT=0,replyT=0;
+    evs.forEach(ev=>{
+      const et=(ev.event_type||'').toLowerCase();
+      const ts=ev.ts||'';let inYr=false;
+      if(ts){const dt=new Date(ts);if(!isNaN(dt))inYr=((today-dt)/(1000*3600*24))<=365}
+      if(et==='pitch_sent'){sentT++;if(inYr)sentY++}
+      else if(['reply_received','warm_follow_up','introduced'].includes(et)){replyT++;if(inYr)replyY++}
+    });
+    const useYr=sentY>0;
+    const sent=useYr?sentY:sentT, rep=useYr?replyY:replyT, win=useYr?'in the last year':'all-time';
+    if(sent<=0&&rep<=0)return;
+    const rate=sent>0?(rep/sent):0;
+    const color=rate>=0.5?'#22c55e':(rate>=0.25?'#d4a853':'#6b7280');
+    el.style.display='inline-flex';
+    el.innerHTML=`<span title="Click to compose pitch with smart suggestions" style="background:${color}22;color:${color};border:1px solid ${color}55;padding:3px 9px;border-radius:999px;font-size:11px;cursor:pointer" onclick="window.location.href='/pitch/${ri}'">${esc(name||'Contact')} responded ${rep} of ${sent} ${win}</span>`;
+  }).catch(()=>{});
 }
 function fv(rec,headers,term){for(const h of headers){if(cleanH(h).toLowerCase().includes(term.toLowerCase()))return rec[h]||''}return ''}
 function fvExact(rec,headers,term){for(const h of headers){if(cleanH(h).toLowerCase()===term.toLowerCase())return rec[h]||''}return ''}
