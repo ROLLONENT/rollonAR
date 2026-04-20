@@ -1,5 +1,5 @@
 """
-ROLLON AR v37.4 - A&R Operating System (Airtable parity rebuild)
+ROLLON AR v37.4.1 - A&R Operating System (Airtable parity rebuild)
 Google Sheets master. No external dependencies.
 """
 
@@ -271,6 +271,11 @@ _CSRF_EXEMPT_PREFIXES = ('/submit', '/api/submit-song', '/api/submit-edit', '/ap
 @app.before_request
 def _csrf_check():
     """Validate CSRF token on state-changing requests from authenticated sessions."""
+    # v37.4.1: self-provision csrf_token for any authenticated session that lacks one.
+    # Covers stale sessions created before CSRF was wired, so page renders always
+    # receive a non-empty token in the meta tag and inline wrapper state.
+    if session.get('authenticated') and not session.get('csrf_token'):
+        session['csrf_token'] = secrets.token_urlsafe(32)
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         return
     # Exempt public/unauthenticated paths

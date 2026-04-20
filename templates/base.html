@@ -81,6 +81,12 @@
   window.fetch=async function(url,opts){
     opts=Object.assign({},opts||{});
     const method=(opts.method||'GET').toUpperCase();
+    // v37.4.1: if token is empty at call time, refresh once before the first send.
+    // Guards stale sessions where the template rendered with no csrf_token.
+    if(needsToken(method)&&!_csrfToken){
+      const fresh=await refreshToken();
+      if(fresh)_csrfToken=fresh;
+    }
     if(needsToken(method))setHeader(opts,_csrfToken);
     let resp=await _origFetch.call(this,url,opts);
     if(resp.status===403&&needsToken(method)&&!opts._csrfRetried){
