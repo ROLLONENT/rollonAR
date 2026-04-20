@@ -198,13 +198,44 @@ class RelationshipsEngine:
         return str(row[id_col]).strip()
 
     def row_data(self, personnel_id):
-        """Return dict of {header: value} for a Personnel ID, or None."""
-        ri = self.row_for_id(personnel_id)
-        if not ri:
+        """Return dict of {header: value} for a Personnel ID, or None.
+
+        v37.3: serve from the cached bulk sheet (get_all_rows, 120s TTL) via
+        an ID -> dict index built once per 120s. Replaces the O(N) per-row
+        Sheets API call that triggered 429 rate limits on bulk exports."""
+        pid = str(personnel_id).strip()
+        if not pid:
             return None
-        row = self.sheets.get_row(PERSONNEL_SHEET, ri)
-        headers = self._headers()
-        return {_clean_header(h): (row[i] if i < len(row) else '') for i, h in enumerate(headers)}
+        bulk = self._bulk_index()
+        return bulk.get(pid)
+
+    def _bulk_index(self):
+        """Return {airtable_id: {header: value}} for every Personnel row.
+        Cached for 120s and invalidated whenever the Sheets cache is."""
+        import time
+        with self._lock:
+            now = time.time()
+            if self._bulk_data is not None and (now - self._bulk_ts) < 120:
+                return self._bulk_data
+            data = self.sheets.get_all_rows(PERSONNEL_SHEET)
+            if not data or len(data) < 2:
+                self._bulk_data = {}
+                self._bulk_ts = now
+                return self._bulk_data
+            headers = data[0]
+            id_col = self._col_idx(AIRTABLE_ID_COLUMN)
+            index = {}
+            if id_col is not None:
+                clean_hdrs = [_clean_header(h) for h in headers]
+                for row in data[1:]:
+                    if id_col < len(row):
+                        aid = str(row[id_col]).strip()
+                        if aid:
+                            index[aid] = {clean_hdrs[i]: (row[i] if i < len(row) else '')
+                                          for i in range(len(clean_hdrs))}
+            self._bulk_data = index
+            self._bulk_ts = now
+            return self._bulk_data
 
     # ---------- Works With link helpers ----------
 
@@ -226,18 +257,19 @@ class RelationshipsEngine:
         return ' | '.join(ordered)
 
     def get_works_with(self, personnel_id):
-        """Return list of linked Personnel IDs for a given Personnel ID."""
-        ri = self.row_for_id(personnel_id)
-        if not ri:
+        """Return list of linked Personnel IDs for a given Personnel ID.
+
+        v37.3: serve from the bulk in-memory index. One sheet read per 120s."""
+        pid = str(personnel_id).strip()
+        if not pid:
             return []
-        row = self.sheets.get_row(PERSONNEL_SHEET, ri)
-        ww_col = self._col_idx(WORKS_WITH_COLUMN)
-        if ww_col is None or ww_col >= len(row):
+        data = self._bulk_index().get(pid)
+        if not data:
             return []
-        raw = row[ww_col]
+        raw = data.get(WORKS_WITH_COLUMN, '')
         ids = self._parse_ids(raw)
-        mapping = self._refresh_id_to_row()
-        return [i for i in ids if i in mapping and i != personnel_id]
+        mapping = self._bulk_index()
+        return [i for i in ids if i in mapping and i != pid]
 
     def get_related(self, personnel_id):
         """Alias for get_works_with (Phase 2 API requirement)."""
