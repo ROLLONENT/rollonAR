@@ -2332,6 +2332,23 @@ def api_relationships_lookup(personnel_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/relationships/types', methods=['GET'])
+@login_required
+def api_relationships_types():
+    """Returns the LINK_TYPES registry for the UI. Excludes the symmetric
+    works_with since that has its own dedicated surface."""
+    out = []
+    for key, spec in RELATIONSHIP_LINK_TYPES.items():
+        if key == 'works_with':
+            continue
+        out.append({
+            'key': key,
+            'column': spec['column'],
+            'inverse': spec['inverse'],
+            'symmetric': spec['symmetric'],
+        })
+    return jsonify({'types': out})
+
 @app.route('/api/relationships/generic-add', methods=['POST'])
 @login_required
 def api_relationships_generic_add():

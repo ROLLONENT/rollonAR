@@ -791,6 +791,7 @@ function dirActions(rec,headers){
   b+=`<button class="btn btn-sm" onclick="logOutreach(${ri})" title="Log today as last outreach date">📅 Log Outreach</button>`;
   b+=`<button class="btn btn-sm" onclick="viewPersonSongs('${escA(name)}')" title="View all songs this person is credited on">🎵 Songs</button>`;
   b+=`<button class="btn btn-sm" onclick="worksWithUI(${ri},'${escA(name)}')" title="See and edit who this person works with">🔗 Works With</button>`;
+  b+=`<button class="btn btn-sm" onclick="relationshipsUI(${ri},'${escA(name)}')" title="Manage Manager / Agent / A&R / Publishing relationships">🕸️ Relationships</button>`;
   if(company)b+=`<button class="btn btn-sm" onclick="navToRecord('${escA(company)}')" title="Open company record">🏢 ${esc(company.split('|')[0].trim().substring(0,15))}</button>`;
   return b;
 }
@@ -1207,6 +1208,126 @@ function _wwRemoveLink(toId){
     _wwRenderChips();
     const masterRi=modal.dataset.masterRi;
     if(masterRi)refreshDetail(parseInt(masterRi,10),'directory');
+  });
+}
+
+// ---- RELATIONSHIPS (v36: Manager / Agent / A&R / Publishing linked-record UI) ----
+function relationshipsUI(ri,masterName){
+  fetch('/api/directory/'+ri).then(r=>r.json()).then(rec=>{
+    let airtableId='';
+    for(const h of Object.keys(rec)){
+      if(cleanH(h).toLowerCase()==='airtable id'){airtableId=(rec[h]||'').trim();break}
+    }
+    if(!airtableId){toast('Contact has no Airtable ID','error');return}
+    Promise.all([
+      fetch('/api/relationships/types').then(r=>r.json()),
+      fetch('/api/relationships/lookup/'+encodeURIComponent(airtableId)).then(r=>r.json()),
+    ]).then(([t,l])=>_openRelModal(ri,airtableId,masterName,t.types||[],l||{}));
+  });
+}
+
+function _openRelModal(masterRi,masterId,masterName,types,linksByType){
+  let modal=document.getElementById('rel-modal');
+  if(modal)modal.remove();
+  modal=document.createElement('div');
+  modal.id='rel-modal';
+  modal.className='modal';
+  modal.style.display='flex';
+  const labelFor=(k)=>({
+    manages:'Manages (Artists)',
+    managed_by:'Managed By (Rep)',
+    represents:'Represents (Artists)',
+    represented_by:'Agent',
+    ar_rep:"A&R's Artists",
+    is_ar_for:'Record Label A&R',
+    publishing_rep:"Publishing Rep's Artists",
+    is_publishing_rep_for:'Publishing Rep',
+    creative_of:'Creatives',
+    works_with_creative:'Creative Works For',
+  })[k]||k;
+  let html=`
+    <div class="modal-content" style="max-width:640px">
+      <div class="modal-header">
+        <div class="modal-title">Relationships: ${esc(masterName)}</div>
+        <span class="modal-close" onclick="document.getElementById('rel-modal').remove()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:11px;color:var(--text-ghost);margin-bottom:12px">
+          Linked records are bidirectional. Adding "Manages" writes "Managed By" on the other side.
+        </div>`;
+  for(const t of types){
+    const links=linksByType[t.key]||[];
+    html+=`<div class="rel-block" data-link-type="${escA(t.key)}" style="margin-bottom:14px;padding:10px;background:var(--bg-surface);border-radius:6px">
+      <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:6px">${esc(labelFor(t.key))}</div>
+      <div class="rel-chips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:22px;margin-bottom:6px">${
+        links.length?links.map(l=>
+          `<span class="pill" style="background:#374151;color:#fff;padding:3px 8px;border-radius:12px;font-size:11px;display:inline-flex;gap:6px;align-items:center">
+            ${esc(l.name||l.id)}
+            <span style="cursor:pointer;font-weight:bold" onclick="_relRemoveLink('${escA(t.key)}','${escA(l.id)}')" title="Remove">&times;</span>
+          </span>`
+        ).join(''):'<span style="color:var(--text-ghost);font-size:11px">No links.</span>'
+      }</div>
+      <input class="rel-input" data-link-type="${escA(t.key)}" class="typeahead-input" placeholder="Type a name to link..." autocomplete="off" style="width:100%;font-size:11px">
+      <div class="rel-dropdown" style="display:none;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;margin-top:4px;max-height:160px;overflow-y:auto"></div>
+    </div>`;
+  }
+  html+='</div></div>';
+  modal.innerHTML=html;
+  document.body.appendChild(modal);
+  modal.dataset.masterId=masterId;
+  modal.dataset.masterRi=masterRi;
+  modal.querySelectorAll('.rel-input').forEach(inp=>{
+    const lt=inp.dataset.linkType;
+    const dd=inp.parentElement.querySelector('.rel-dropdown');
+    let t=null;
+    inp.addEventListener('input',()=>{
+      clearTimeout(t);
+      const q=inp.value.trim();
+      if(q.length<2){dd.style.display='none';return}
+      t=setTimeout(()=>{
+        fetch('/api/relationships/search',{method:'POST',headers:_jsonHeaders(),
+          body:JSON.stringify({q,exclude_id:masterId})})
+        .then(r=>r.json()).then(d=>{
+          const res=d.results||[];
+          dd.innerHTML=res.length?res.map(r=>
+            `<div class="typeahead-item" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border)" onclick="_relAddLink('${escA(lt)}','${escA(r.id)}','${escA(r.name)}')">${esc(r.name)}${r.company?` <span style="color:var(--text-ghost);font-size:10px">${esc(r.company)}</span>`:''}</div>`
+          ).join(''):'<div style="padding:6px 10px;color:var(--text-ghost);font-size:11px">No matches</div>';
+          dd.style.display='block';
+        });
+      },200);
+    });
+  });
+}
+
+function _relAddLink(linkType,toId,toName){
+  const modal=document.getElementById('rel-modal');
+  if(!modal)return;
+  const masterId=modal.dataset.masterId;
+  fetch('/api/relationships/generic-add',{method:'POST',headers:_jsonHeaders(),
+    body:JSON.stringify({from_id:masterId,to_id:toId,link_type:linkType})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error,'error');return}
+    toast('Linked '+toName);
+    const masterRi=parseInt(modal.dataset.masterRi,10);
+    const name=modal.querySelector('.modal-title').textContent.replace('Relationships: ','');
+    modal.remove();
+    relationshipsUI(masterRi,name);
+  });
+}
+
+function _relRemoveLink(linkType,toId){
+  const modal=document.getElementById('rel-modal');
+  if(!modal)return;
+  const masterId=modal.dataset.masterId;
+  fetch('/api/relationships/generic-remove',{method:'POST',headers:_jsonHeaders(),
+    body:JSON.stringify({from_id:masterId,to_id:toId,link_type:linkType})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){toast(d.error,'error');return}
+    toast('Unlinked');
+    const masterRi=parseInt(modal.dataset.masterRi,10);
+    const name=modal.querySelector('.modal-title').textContent.replace('Relationships: ','');
+    modal.remove();
+    relationshipsUI(masterRi,name);
   });
 }
 
