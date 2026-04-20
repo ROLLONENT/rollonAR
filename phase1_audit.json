@@ -1,0 +1,1277 @@
+{
+  "Songs": {
+    "row_count": 802,
+    "headers": [
+      "Airtable ID",
+      "[✓] Title",
+      "[✓] Written Date",
+      "[✓] Tag",
+      "[✓] Audio Status",
+      "[✓] Song Admin",
+      "[✓] Lyrics",
+      "[✓] Lyrics Docs",
+      "[✓] Songwriter Credits",
+      "[✓] Artist",
+      "[✓] Producer",
+      "[✓] Record Label",
+      "[✓] Format",
+      "[✓] Dropbox Link",
+      "[✓] DISCO",
+      "[✓] Mixing Engineer",
+      "[✓] Mastering Engineer",
+      "[✓] Release Date",
+      "[✓] CAT NO",
+      "[✓] SX Reg [Ben Wylen]",
+      "[✓] PPL [Ben Wylen]",
+      "[✓] PRO #",
+      "[✓] PRO Reg",
+      "[✓] SX ID [Ben Wylen]",
+      "[✓] ISWC",
+      "[✓] ISRC",
+      "[✓] GTIN/Barcode",
+      "[✓] Spotify URL",
+      "[✓] Master Splits",
+      "[✓] Recording Date",
+      "[✓] Studio",
+      "[✓] Recording Country",
+      "[✓] Recording City",
+      "[✓] Song Trust [Ben Wylen]",
+      "Last Modified",
+      "Created",
+      "Modified by",
+      "[✓] Vocalist",
+      "[✓]  Pitches",
+      "[✓] Pub Credit",
+      "Project",
+      "Label Copy",
+      "Artists Pitched",
+      "Labels Pitched",
+      "Pubs Pitched",
+      "Writer IPI",
+      "Publishing IPI",
+      "Legal Docs"
+    ],
+    "samples": [
+      [
+        "rec004PXOD116HloX",
+        "Hot Like July",
+        "2024-05-27",
+        "KPOP Pitch | R&B Pitch | Pitch | Pop Pitch | TEST",
+        "Pitch Ready",
+        "[ ] Check & Format\n[ ] Lyrics\n[ ] Confirm\n[ ] Producer\n[ ] Request\n[ ] Writer & Publishing info\n[ ] TEST",
+        "[Intro]\n12 months in a year, but I’m hot like July\n\n[Verse]\nAll I need\nIs to jump into the feeling, it’s so deep so Deep so Deep\nMy Baby could you tell me if I’m dreaming is it real\nWhat I feel\n\n[Pre-Chorus]\nDon’t want to wake up\nWon’t get up\nI’m staying put all weekend \nYou get me breakfast\nI’ll get you something sweeter\n\nYou you you you\nYou you you yeah\n\n[Chorus’\nYou can Call me call me If you're looking for a good time \nDon’t you worry, Oh no, no no \nCan Call me Call me I’ll be waiting for you all night \nYou can let me know, you can let me know \n\nPost:\nFeels a lot like, feels a lot like, like a high\nGot me hot like , got ot me hot like, like july\nCuz with you it feels like summer all the time\nBoy you got me, boy you got me, boy you got me\nHot like july \n\nVerse:\nMy lover lover boy’s a 100 degrees\nI think he got me now cause I’m on my knees\nAnd I’ve been thinking bout him constantly\nGot me wild and I love it \n\nPre:\nDon’t want to wake up\nWon’t get up\nI’m staying put all weekend \nYou get me breakfast\nI’ll get you something sweeter\nYou you you you\nYou you you yeah\n\nChorus:\nYou can Call me call me If you're looking for a good time \nDon’t you worry Oh no, no no \nCan Call me Call me I’ll be waiting for you all night \nYou can let me know, you can let me know \nFeels a Lot like feels a lot like a high\nGot me hot like Got me hot like like july\nCuz with you it feels like summer all the time\nBoy you got me boy you got me boy you got me\nHot like july \n\nBridge:\nHot, Hot like July\nI’m living that summer life\nHot, Hot like July\nYeah baby that’s what I like \n\nHot, Hot like July\nI’m living that summer life\nHot, Hot like July\nYeah baby that’s what I like \n\nChorus:\nYou can Call me call me If you're looking for a good time \nDon’t you worry Oh no, no no \nCan Call me Call me I’ll be waiting for you all night \nYou can let me know, you can let me know \n\nPost:\nFeels a lot like, feels a lot like, like a high\nGot me hot like , got ot me hot like, like july\nCuz with you it feels like summer all the time\nBoy you got me, boy you got me, boy you got me\nHot like july \n\n12 months in a year, but I’m hot like July \n12 months in a year, but I’m hot like July",
+        "https://drive.google.com/file/d/134iKDDdSRY6o9fDYcVVJxludUVM9BiUS/view?usp=drivesdk",
+        "Louise Lindberg | Nermin Harambasic | Joohyoung Lee | Isa Molin",
+        "Available",
+        "recpXh8ENXogFdYAE",
+        "",
+        "",
+        "https://www.dropbox.com/scl/fo/yiel9ghmogozhern6vi9f/AMOz0NtSOy3JOBS7KgpHyKU?rlkey=52v8di4vzftbbwb2dp8z9mpym&st=gbheqvtd&dl=0",
+        "https://s.disco.ac/smmwhkmkxkun",
+        "Ben Jackson Cook",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "2026-04-09 9:04",
+        "2024-06-01T00:49:17.000Z",
+        "{\"id\": \"usrzcQRVBX3aNQ1Ix\", \"email\": \"celina@rollonent.com\", \"name\": \"Celina Rollon\"}",
+        "recpXh8ENXogFdYAE",
+        "",
+        "25.00% Louise Lindberg [TEN Songs administered by Kobalt (STIM)] / 25.00% Nermin Harambasic [KMR (TBC)]\n / 25.00% Joohyoung Lee [KMR (TBC)] / 25.00% Isa Molin [Freebird Songs administered by Kobalt (STIM)]\n",
+        "",
+        "",
+        "",
+        "rec1zqGdDdnsHtNnE | rec1WLzvtNyokbGUO",
+        "",
+        "641093467",
+        "641093467"
+      ],
+      [
+        "rec067rNTd54NKzfC",
+        "Cards",
+        "2024-07-01",
+        "Register PRO | Cuts | EP2 | Sync | PW Tour | BW Collab",
+        "Mix Ready",
+        "```Finishing this up on 06 Aug, 2024.```[ ] Get, Check & Format Lyrics [ ] Request Writer & Publishing info",
+        "[VERSE] \nBlurry lines\nJust a laundry list of things I recognize\nNo Surprise\nFantasize\nIt was just enough to keep you on the line \n\n[PRE-CHORUS]\nI don’t know who I am without you anymore \nThe days turn cold, it’s a love grown old, but I don’t wanna \nChase you through a lifetime when you’re half out the door \nAnymore \n \n[CHORUS] \nI’m gonna cry\nFor the hell of it \nI'm gonna scream\nSix feet underground \nI give and I give \nAnd it’s delicate \nSomeone help me out \n\nNot gonna lie \nFor your benefit \nI'm not gonna fall\nTip toe-ing around \nIt’s kind of funny darling \nLook how the cards have fallen \n\n[VERSE] \nSuddenly I’m jaded \nAll my faults I set aside \nThey’ve all come to life \nI hate that it don’t come easy\nWhen it’s everything that I wanted \nThought i had it all but I lost it \n\n[PRE-CHORUS]\nI don’t know who I am without you anymore \nThe days turn cold, it’s a love grown old, but I don’t wanna \nChase you through a lifetime when you’re half out the door \nAnymore \n \n[CHORUS] \nI’m gonna cry\nFor the hell of it \nI'm gonna scream\nSix feet underground \nI give and I give \nAnd it’s delicate \nSomeone help me out \n\nNot gonna lie \nFor your benefit \nI'm not gonna fall\nTip toe-ing around \nIt’s kind of funny darling \nLook how the cards have fallen \n\nI’m gonna cry\nFor the hell of it \nI'm gonna scream\nSix feet underground \nI give and I give \nAnd it’s delicate \nSomeone help me out \n\nNot gonna lie \nFor your benefit \nI'm not gonna fall\nTip toe-ing around \nIt’s kind of funny darling \nLook how the cards have fallen \nLook how the cards have fallen \n",
+        "https://drive.google.com/file/d/1I9u1BXt8mozOBqj2OJ06sEoOsDkt5PI_/view?usp=drivesdk | https://drive.google.com/file/d/1khqYmiCK0kyhFrEn_kJHNa2kgjmgS0HJ/view?usp=drivesdk",
+        "EMMMA | Zoe Giosa-Hirsch | Ben Wylen | NEW TEST",
+        "EMMMA",
+        "rech0WpOxBCqdyWhm",
+        "recLdv512izPCnPR0",
+        "Single",
+        "https://www.dropbox.com/scl/fo/xzuh8t1jegfpxfhenfkrm/AMrQ_H1J8QQAPr1wYmjbY8g?rlkey=r5xn0mwr3lhb2e607nxfvag7r&dl=0",
+        "https://s.disco.ac/ntahjpyzrarj",
+        "recrZMP0mz6FOPBDe",
+        "recwozSnXJSyWwMNn",
+        "2025-10-16",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "T3340860762",
+        "QM4TW2516316",
+        "",
+        "",
+        "$3500 USD$2500 non-recoupable$1000 recoupable20% Gross (or 4 points PPD)",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "2026-04-13 16:29",
+        "2024-07-16T22:14:44.000Z",
+        "Celina Rollon",
+        "recoL3eSrM1zSzN44",
+        "MAIA",
+        "33.33% Zoe Giosa-Hirsch [Zoe Nicole (ASCAP)] / 33.33% Ben Wylen [Restless Youth Entertainment (BMI)] administrated by Rightsbridge (PRS)] / 33.34% EMMMA [Evergreen Ave (ASCAP) administrated by Rightsbridge (PRS)]",
+        "Wednesday's Child EP",
+        "Written by EMMMA, Ben Wylen & Zoe Giosa-Hirsch\nProduced & Engineered by Ben Wylen \nLead Vocals & Background Vocals by EMMMA\nDrum Programming, Bass, Synths, Slide Guitar & Electric Guitar by Ben Wylen\nMixed by Lee Smith \nMastered by Manon Grandjean\nA&R & Management by Celina Rollon",
+        "",
+        "",
+        "",
+        "898320791 | 874704410 | 1072257767 ",
+        "898320791 | 874704410 | 1072257767 "
+      ],
+      [
+        "rec06W9OhWT5kliPQ",
+        "Live Forever",
+        "",
+        "BW Collab",
+        "TEST",
+        "",
+        "",
+        "",
+        "rech0WpOxBCqdyWhm",
+        "",
+        "TEST",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "\n",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "2024-03-20T17:47:00.000Z",
+        "2021-06-16T23:19:49.000Z",
+        "",
+        "",
+        "",
+        "100.00% Ben Wylen [Restless Youth Entertainment (BMI)]\n",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "1072257767",
+        "1072257767"
+      ]
+    ]
+  },
+  "Personnel": {
+    "row_count": 12779,
+    "headers": [
+      "Airtable ID",
+      "[✓] Name",
+      "[✓] Genre",
+      "[✓] City",
+      "[✓] Outreach Notes",
+      "[✓] Tags",
+      "[✓] Title",
+      "[✓] Works With",
+      "[✓] Works with Button",
+      "[✓] Backlink",
+      "[✓] Field",
+      "[✓] Email",
+      "[✓] Linkedin/Socials",
+      "[✓] Countries",
+      "[✓] Writer IPI #",
+      "[✓] PRO",
+      "[✓] Pub Credit",
+      "[✓] Publishing IPI#",
+      "[✓] Telephone",
+      "[✓] Last Outreach",
+      "[✓] Songs Written",
+      "[✓] Artists",
+      "[✓] Creatives",
+      "[✓] Bio",
+      "[✓] MGMT Rep",
+      "[✓] MGMT Company",
+      "[✓] URL (from MGMT Company)",
+      "[✓] Publishing Rep",
+      "[✓] Publishing Company",
+      "[✓] Record Label A&R",
+      "[✓] Record Label",
+      "[✓] PPL",
+      "[✓] Type of Label",
+      "[✓] Agent",
+      "[✓] Agency",
+      "[✓] Featured Artist [LU]",
+      "[✓] Produced [LU]",
+      "[✓] Mixed [LU]",
+      "[✓] Mastered [LU]",
+      "[✓] Website [LU]",
+      "[✓] Combined First Names [USE]",
+      "[✓] Emails Combined [USE]",
+      "[✓] Company",
+      "[✓] Credits [Sync]",
+      "[✓] Sync Type",
+      "[✓] Alt Pitch Lines",
+      "[✓] Set Out Reach Date/Time",
+      "[✓] Date/Time In LA to send email",
+      "Songs",
+      "Creatives Publishing",
+      "[✓] Pitched Songs",
+      "Admin Due Date",
+      "[✓] Artists [MGMT]",
+      "[✓] Artists [Agent MGMT]",
+      "[✓] Artists [Publishing Rep]",
+      "[✓] Artists [Record Label A&R]",
+      "[✓] Creatives [MGMT]",
+      "[✓] Creatives [Publishing Rep]",
+      "[✓] Creatives [Record Label A&R]",
+      "Known",
+      "[✓] Date/Time In London to send email",
+      "Brand",
+      "Brand Category",
+      "Instagram Handle",
+      "Outreach Method",
+      "Partnership Type",
+      "Campaign Notes",
+      "Budget Range",
+      "One Sheet URL"
+    ],
+    "samples": [
+      [
+        "rec02PMaTJJKoEIQL",
+        "Steve Mac",
+        "",
+        "London",
+        "",
+        "EMMMA Brand",
+        "Topline / Melody",
+        "",
+        "{\"label\": \"Works With\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec02PMaTJJKoEIQL?blocks=bliHPL8e5o9k8Lb2x\"}",
+        "{\"label\": \"Dynamic Backlink\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec02PMaTJJKoEIQL?blocks=bli4Hfh8pQUV9pUWW\"}",
+        "Creative",
+        "",
+        "",
+        "rec5o1OVQHF7M7nAU",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "\n"
+      ],
+      [
+        "rec02wOFE6WndD0F6",
+        "Don Isaac",
+        "",
+        "",
+        "",
+        "Need Email | Dance Pitch",
+        "",
+        "",
+        "{\"label\": \"Works With\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec02wOFE6WndD0F6?blocks=bliHPL8e5o9k8Lb2x\"}",
+        "{\"label\": \"Dynamic Backlink\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec02wOFE6WndD0F6?blocks=bli4Hfh8pQUV9pUWW\"}",
+        "MGMT",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "recpbMGWG8zVShJGC",
+        "",
+        "",
+        "recp7lCeWnbLGBbFk"
+      ],
+      [
+        "rec034iTqJI6AZraJ",
+        "Torbjörn Sten",
+        "",
+        "Stockholm",
+        "4/20/2022- Carimei reached out\n",
+        "",
+        "",
+        "",
+        "{\"label\": \"Works With\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec034iTqJI6AZraJ?blocks=bliHPL8e5o9k8Lb2x\"}",
+        "{\"label\": \"Dynamic Backlink\", \"url\": \"https://airtable.com/tblK6myDn1w2j8Ns2/rec034iTqJI6AZraJ?blocks=bli4Hfh8pQUV9pUWW\"}",
+        "MGMT",
+        "ts@mrradar.com",
+        "",
+        "recwr6XgyhNWR2lkf",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "2022-12-13T10:00:00.000Z",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "recxZaXGz5CFEMyMZ",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "C",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "2023-12-13T11:00:00.000Z"
+      ]
+    ]
+  },
+  "A&R Contacts": {
+    "row_count": 0,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Label",
+      "Email",
+      "Phone",
+      "Artists",
+      "Genre Focus",
+      "Instagram",
+      "LinkedIn",
+      "Notes",
+      "Last Contacted",
+      "Status"
+    ],
+    "samples": []
+  },
+  "Pitches": {
+    "row_count": 5,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Notes",
+      "Songs"
+    ],
+    "samples": [
+      [
+        "recCI1FW5fzhQzdsu",
+        "MAIA",
+        "",
+        "recpifiXqQyk3frAv | recrrQFQ9ZZKGsZhZ | rec067rNTd54NKzfC | recnlAAJ42UiWXhtM | recAwpifYdn86b8ns | recXs9gXyPzwwnBqE | recIioO69WDImMZc8 | recEcNnnrGUNVTE7C | recEeUthy7aAKl3xW | recDABsCIeo7e1ju8 | recuWA705TjK8H0zB | recVu3s6LL2MLp5Lw | rec2CDQod2vft1GSX | recrQb52Tz0gli0yr | recWNkz4xgrJnk2mp | recDAb4ORsQpZacnj"
+      ],
+      [
+        "recXYkV3V8GhWQ3Mn",
+        "Susan Slamer"
+      ],
+      [
+        "recnARSDDsotIXWoq",
+        "3",
+        "Jun 23 Sync Pitch",
+        "recFHPrjq49WQRZwI"
+      ]
+    ]
+  },
+  "Companies": {
+    "row_count": 22,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Type",
+      "URL",
+      "Personnel",
+      "Notes"
+    ],
+    "samples": [
+      [
+        "rec1M0yzHY84r8vVE",
+        "TBA",
+        "Agency",
+        "https://tbaagency.com/",
+        "rec4Jcnxc1hCy1Aml | recqFxNzcuQPc3zqn"
+      ],
+      [
+        "rec2Qpjp7Un59pxnS",
+        "Primary Talent",
+        "Agency",
+        "",
+        "recRqh7Loj6dgd5K0 | recCslNnvJfC82u3D"
+      ],
+      [
+        "rec5k8PFZxoUKe9AE",
+        "Coda Music Agency",
+        "Agency",
+        "",
+        "recANy4fo5okAvdQa | recLgLGs7jNSXduKK"
+      ]
+    ]
+  },
+  "Admin Log": {
+    "row_count": 0,
+    "headers": [],
+    "samples": []
+  },
+  "MGMT Companies": {
+    "row_count": 541,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "URL",
+      "MGMT Rep (Personnel)",
+      "Mgmt Reps (from MGMT Rep (Personnel))",
+      "Artists (from MGMT Rep (Personnel))",
+      "Creatives (from MGMT Rep (Personnel))",
+      "Artists (from MGMT Rep)",
+      "Creatives (from MGMT Rep)",
+      "MGMT Rep copy"
+    ],
+    "samples": [
+      [
+        "rec01rax7h3iREGlB",
+        "The Brain",
+        "",
+        "recTSuF95gjE2vi66",
+        "The Brain",
+        "",
+        "",
+        "",
+        "",
+        "The Brain"
+      ],
+      [
+        "rec01sPVBQ0ISME8U",
+        "Bluevent Group",
+        "http://blueventgroup.com/",
+        "reclRctVJztmJ4iQG | recFq7QeQGZmzi4iJ",
+        "Thierry Klein Bluemink",
+        "Bakermat",
+        "Bakermat"
+      ],
+      [
+        "rec0IMFpo29xHq1R4",
+        "Friends v Music",
+        "",
+        "rec6UQ91m3XQ4UcM6 | rec2xZQeA1jh3AsYo",
+        "Pip Newby",
+        "",
+        "Stefan Abingdon",
+        "",
+        "",
+        "Stefan Abingdon, Pip Newby"
+      ]
+    ]
+  },
+  "Record Labels": {
+    "row_count": 311,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Parent Company",
+      "Type",
+      "HIDE - ALL Personnel",
+      "Record Label A&R LU",
+      "Artist LU",
+      "URL",
+      "Notes",
+      "Repertoire",
+      "Record A&R (from HIDE - ALL Personnel)",
+      "Artists (from HIDE - ALL Personnel)",
+      "Creatives (from HIDE - ALL Personnel)",
+      "Songs"
+    ],
+    "samples": [
+      [
+        "rec05PciEjGf8fx3O",
+        "MNRK Music Group",
+        "",
+        "",
+        "recKeKPOpUu1EH9aB",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Norma-Jean Martine",
+        "Norma-Jean Martine"
+      ],
+      [
+        "rec0KYcavUR38qD3b",
+        "10K Projects",
+        "",
+        "Major Indie",
+        "recxZWWMUSeFbaIsD | recCwO9LTgBKn2ne8 | recqyQJvCpptnLhvd | recxwSHE41bCcxPgu",
+        "recAa5ykj4xO1AYUh | recAa5ykj4xO1AYUh",
+        "rec1h0SERdbH2bBc6",
+        "",
+        "",
+        "recmZ1GlqXMeD8WBR",
+        "Riley Newkirk",
+        "Trippie Redd | Natalie Jane | Leah Kate",
+        "Natalie Jane"
+      ],
+      [
+        "rec0YpKy9z5KARPJC",
+        "Neon Records",
+        "",
+        "Major Label",
+        "reczRgRNBBIZDYQC0 | recFJFuJP4JCjcBVi | recaONgEiHFXnQ1OY",
+        "",
+        "",
+        "https://neonrecords.com.au/",
+        "",
+        "",
+        "",
+        "Gorgan City | MEDUZA | Felix Jaehn",
+        "Gorgan City | MEDUZA"
+      ]
+    ]
+  },
+  "Label Parent": {
+    "row_count": 18,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Record Labels"
+    ],
+    "samples": [
+      [
+        "rec4rBvDgLWtHDxiN",
+        "PLEDIS ENTERTAINMENT"
+      ],
+      [
+        "rec7GETCcjCnESPmU",
+        "Involved Group",
+        "recGtEZtHa4NIaGjM | recaF0RIoMO9Dnkj3"
+      ],
+      [
+        "recJC98ZoNn3PEUKc",
+        "The Nations",
+        "recnWcaizOPuHk5Fv"
+      ]
+    ]
+  },
+  "Publishing Co": {
+    "row_count": 124,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Publishing Rep",
+      "Creatives (from Publishing Rep)",
+      "Artists (from Publishing Rep)",
+      "URL",
+      "Publishing A&R (from Publishing Rep)",
+      "Songwriters",
+      "Artist",
+      "Songs"
+    ],
+    "samples": [
+      [
+        "rec09lBlxyUdHmTkW",
+        "Downtown Music Publishing",
+        "recJN27h9vTvNDGWg",
+        "Beren Olivia (Beren McGarry)",
+        "Beren Olivia (Beren McGarry)"
+      ],
+      [
+        "rec0D4KaUvOIKyCBa",
+        "Sentric Music Publishing",
+        "recEhfSG87h8NNL72",
+        "Brandon Hill (Hot Dennis)",
+        "",
+        "https://sentricmusic.com/?utm_term=sentric%20music%20publishing&utm_campaign=S%20%7C%20UK%20%7C%20Leads%20%7C%20Brand%20%2B%20Competitors%20%7C%20Phrase&utm_source=adwords&utm_medium=ppc&hsa_acc=9347290472&hsa_cam=14724671177&hsa_grp=130435052587&hsa_ad=547307478875&hsa_src=g&hsa_tgt=kwd-732172174287&hsa_kw=sentric%20music%20publishing&hsa_mt=e&hsa_net=adwords&hsa_ver=3&gad=1&gclid=CjwKCAjw1MajBhAcEiwAagW9MfyeIDXF3XUOdb_TdAdZQmS1ujxcyXSxzjg3H0k_1nTsdbS2dp667hoCTaMQAvD_BwE"
+      ],
+      [
+        "rec0UBD6pmEHwNFJA",
+        "Da Works",
+        "recWeSJxrjoTFoQXs | recWjg6sBJkDE7QQH | recnAXwGHpiEFNY8g",
+        "Henrik Heaven",
+        "Henrik Heaven",
+        "",
+        "Cecilie Iversen | Jørn Dalchow"
+      ]
+    ]
+  },
+  "Agent": {
+    "row_count": 66,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Artists",
+      "Agency",
+      "Email",
+      "URL",
+      "Outreach"
+    ],
+    "samples": [
+      [
+        "rec0Ouy9bhUjyv32Y",
+        "Marty Diamond",
+        "David Gray | Louis Tomlinson | Rex Orange County",
+        "",
+        "mdiamond@paradigmagency.com"
+      ],
+      [
+        "rec1iNxpA4mABp9pr",
+        "Avery McTaggart",
+        "Electric Guest | Hiatus Kaiyote | Hope Tala | Party Pupils",
+        "TBA",
+        "hello@tbaagency.com"
+      ],
+      [
+        "rec1yj3vf5DrWJpOJ",
+        "Steve Strange",
+        "Bright Eyes",
+        "Xraytouring.com",
+        "steve@xraytouring.com"
+      ]
+    ]
+  },
+  "Publicist": {
+    "row_count": 3,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Artists",
+      "PR Company",
+      "Email",
+      "Tel",
+      "Notes",
+      "URL Lookup"
+    ],
+    "samples": [
+      [
+        "rec8BsLcatRC1sBCx",
+        "Joshua Page",
+        "Kesha",
+        "Shore Fire Media",
+        "",
+        "",
+        "Fran Bowdery has relationship\n"
+      ],
+      [
+        "recfwBCRfNTYSOQjf",
+        "Alexandra Baker",
+        "Billie Eilish",
+        "High Rise PR",
+        "alexandra@highrisepr.com",
+        "(646) 421-7927",
+        "Sonia has relationship\n"
+      ],
+      [
+        "reczZkPG8KPvmavWK",
+        "Devin Sauschuck",
+        "La Roux",
+        "42 West",
+        "Devin.Sauschuck@42west.net",
+        "(845) 344-7453",
+        "Sonia has relationship\n"
+      ]
+    ]
+  },
+  "PR Company": {
+    "row_count": 3,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Publicist ",
+      "URL",
+      "Artists",
+      "Personnel",
+      "Note"
+    ],
+    "samples": [
+      [
+        "recMSEU4Zck94YVqs",
+        "High Rise PR",
+        "Alexandra Baker",
+        "",
+        "",
+        "Alexandra Baker"
+      ],
+      [
+        "recVmvkTUJoiFfkmn",
+        "Shore Fire Media",
+        "Joshua Page",
+        "https://shorefire.com/",
+        "",
+        "Joshua Page"
+      ],
+      [
+        "recl5NxJDm3eEmOVQ",
+        "42 West",
+        "Devin Sauschuck",
+        "",
+        "",
+        "Devin Sauschuck"
+      ]
+    ]
+  },
+  "Music Sup Co": {
+    "row_count": 47,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Personnel"
+    ],
+    "samples": [
+      [
+        "rec122buaQCpXEz13",
+        "Velvet Ears",
+        "rec6LQcCO11wbMz6d"
+      ],
+      [
+        "rec1OcedDZ8OFxGM5",
+        "Colorbox",
+        "recayjj37ueohRHck"
+      ],
+      [
+        "rec55hIKHTf4v6bqv",
+        "Deep Cut",
+        "recqLyamT953FMYwC | recJ8xHnCRKeor7uC"
+      ]
+    ]
+  },
+  "Cities": {
+    "row_count": 131,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Personnel",
+      "Timezone"
+    ],
+    "samples": [
+      [
+        "rec02sL5vfePgsMTx",
+        "Baltimore",
+        "Shordie Shordie",
+        "Eastern US"
+      ],
+      [
+        "rec08HIgeMOpICQUr",
+        "Philadelphia",
+        "Joseph Marro",
+        "Eastern US"
+      ],
+      [
+        "rec0mSEc5po7xR7qM",
+        "Las Vegas",
+        "Nick Cappelli, Celine Dion, Dizzy Wright, Imagine Dragons, Shania Twain, Steve Aoki, The Killers, Usher",
+        "Pacific US"
+      ]
+    ]
+  },
+  "Clean Up Tasks": {
+    "row_count": 33,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Job Type",
+      "Status Of Job",
+      "Notes",
+      "Adam Notes",
+      "What was done",
+      "URL",
+      "Attachments",
+      "Adam Attachments",
+      "Completion Notes"
+    ],
+    "samples": [
+      [
+        "rec0uMIbAA5N0ANYq",
+        "Publishing Company",
+        "Admin",
+        "Outstanding",
+        "- Need to add URL links\n- \n"
+      ],
+      [
+        "rec56Z5A1EkSciB3a",
+        "Personnel - Cities",
+        "Admin",
+        "Outstanding",
+        "- Need to clean up cities to make sure we can search the entire base by location.\n- Needs massive clean up to add citys to those that haven't got and moving forward add cities as we go.\n\n",
+        "",
+        "",
+        "https://airtable.com/appJclEIosf1isidR/tblK6myDn1w2j8Ns2/viwWubjvwScY1OZQ0?blocks=hide"
+      ],
+      [
+        "rec5EdfHqHVZPTbfe",
+        "Warm tag to only be added when respondee replies, not when we're sending follow ups",
+        "Automation",
+        "In Progress"
+      ]
+    ]
+  },
+  "Admin Date": {
+    "row_count": 1,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Songs",
+      "Personnel"
+    ],
+    "samples": [
+      [
+        "recYnHotP4Hkz6jIY",
+        "June 17, 2024",
+        "Logic"
+      ]
+    ]
+  },
+  "Publishing Company": {
+    "row_count": 124,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Publishing Rep",
+      "Songwriters",
+      "Artist",
+      "URL",
+      "Publishing A&R (from Publishing Rep)",
+      "Creatives (from Publishing Rep)",
+      "Artists (from Publishing Rep)",
+      "Songs"
+    ],
+    "samples": [
+      [
+        "rec09lBlxyUdHmTkW",
+        "Downtown Music Publishing",
+        "recJN27h9vTvNDGWg",
+        "",
+        "",
+        "",
+        "",
+        "Beren Olivia (Beren McGarry)",
+        "Beren Olivia (Beren McGarry)"
+      ],
+      [
+        "rec0D4KaUvOIKyCBa",
+        "Sentric Music Publishing",
+        "recEhfSG87h8NNL72",
+        "",
+        "",
+        "https://sentricmusic.com/?utm_term=sentric%20music%20publishing&utm_campaign=S%20%7C%20UK%20%7C%20Leads%20%7C%20Brand%20%2B%20Competitors%20%7C%20Phrase&utm_source=adwords&utm_medium=ppc&hsa_acc=9347290472&hsa_cam=14724671177&hsa_grp=130435052587&hsa_ad=547307478875&hsa_src=g&hsa_tgt=kwd-732172174287&hsa_kw=sentric%20music%20publishing&hsa_mt=e&hsa_net=adwords&hsa_ver=3&gad=1&gclid=CjwKCAjw1MajBhAcEiwAagW9MfyeIDXF3XUOdb_TdAdZQmS1ujxcyXSxzjg3H0k_1nTsdbS2dp667hoCTaMQAvD_BwE",
+        "",
+        "Brandon Hill (Hot Dennis)"
+      ],
+      [
+        "rec0UBD6pmEHwNFJA",
+        "Da Works",
+        "recWeSJxrjoTFoQXs | recWjg6sBJkDE7QQH | recnAXwGHpiEFNY8g",
+        "",
+        "",
+        "",
+        "Cecilie Iversen | Jørn Dalchow",
+        "Henrik Heaven",
+        "Henrik Heaven"
+      ]
+    ]
+  },
+  "Agency Company": {
+    "row_count": 22,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Personnel",
+      "URL",
+      "Artists"
+    ],
+    "samples": [
+      [
+        "rec1M0yzHY84r8vVE",
+        "TBA",
+        "rec4Jcnxc1hCy1Aml | recqFxNzcuQPc3zqn",
+        "https://tbaagency.com/",
+        "reckHdRy0wVAPeGrB | recEwuYM7A7gmUcj4 | recSlUcv8V7c5KFml | recBhNJHM18lbiy03 | reckHdRy0wVAPeGrB | recEwuYM7A7gmUcj4 | recSlUcv8V7c5KFml | recBhNJHM18lbiy03"
+      ],
+      [
+        "rec2Qpjp7Un59pxnS",
+        "Primary Talent",
+        "recRqh7Loj6dgd5K0 | recCslNnvJfC82u3D",
+        "",
+        "recdnaItt4yIko27L | recOWOhJkLIMFdwSv"
+      ],
+      [
+        "rec5k8PFZxoUKe9AE",
+        "Coda Music Agency",
+        "recANy4fo5okAvdQa | recLgLGs7jNSXduKK"
+      ]
+    ]
+  },
+  "Music Sup Company": {
+    "row_count": 47,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Personnel"
+    ],
+    "samples": [
+      [
+        "rec122buaQCpXEz13",
+        "Velvet Ears",
+        "rec6LQcCO11wbMz6d"
+      ],
+      [
+        "rec1OcedDZ8OFxGM5",
+        "Colorbox",
+        "recayjj37ueohRHck"
+      ],
+      [
+        "rec55hIKHTf4v6bqv",
+        "Deep Cut",
+        "recqLyamT953FMYwC | recJ8xHnCRKeor7uC"
+      ]
+    ]
+  },
+  "Countries + Codes": {
+    "row_count": 250,
+    "headers": [
+      "Airtable ID",
+      "Country",
+      "Code",
+      "Dialing Codes",
+      "City",
+      "Personnel",
+      "Repertoire"
+    ],
+    "samples": [
+      [
+        "rec0LVkNkR80KXKip",
+        "Turkey",
+        "TR"
+      ],
+      [
+        "rec0LowtVEZgK3gqI",
+        "Saudi Arabia",
+        "SA"
+      ],
+      [
+        "rec0XlkJooQOnrmxY",
+        "North Korea",
+        "KP"
+      ]
+    ]
+  },
+  "Studios": {
+    "row_count": 27,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Address",
+      "Country",
+      "Type",
+      "Contact",
+      "Notes",
+      "Cost",
+      "Studio Spec"
+    ],
+    "samples": [
+      [
+        "rec5OFE7KGbI51Vzs",
+        "Metropolis\n",
+        "",
+        "United Kingdom"
+      ],
+      [
+        "rec7SNapD04aPkwmq",
+        "15 Batford Road, AL5 5AX\n\nGoogle Map: https://goo.gl/maps/6mutJP8gb5XPwKqA9\n\nDLR: Limehouse to Tower Hill \nCircle: Tower Hill to Farringdon \nTrain: Farringdon to Harpenden\nTaxi: £5 from station taxi ",
+        "",
+        "United Kingdom"
+      ],
+      [
+        "rec7ps7Y9hGYeGOwS",
+        "Bucks Music Group Ltd, Roundhouse, 212 Regents Park Road, London, NW1 8AW",
+        "",
+        "United Kingdom"
+      ]
+    ]
+  },
+  "Email Task Logs": {
+    "row_count": 3,
+    "headers": [
+      "Airtable ID",
+      "Name",
+      "Email",
+      "Link",
+      "Type",
+      "Error"
+    ],
+    "samples": [
+      [
+        "rec24AZkkQV7A3diH",
+        "",
+        "Elias.Christidis@migrate.wmg.com",
+        "https://mail.google.com/mail/u/0/#inbox/18d3b4626c4527d3/18d3b4626c4527d3",
+        "Delivery Failure",
+        "No"
+      ],
+      [
+        "rec4eEmjnLgXoykHs",
+        "",
+        "Elias.Christidis@migrate.wmg.com",
+        "https://mail.google.com/mail/u/0/#inbox/18d3b4626c4527d3/18d3b4626c4527d3",
+        "Delivery Failure",
+        "Yes"
+      ],
+      [
+        "recBqCxjUDYDkA5om",
+        "",
+        "celina@rollonent.com",
+        "https://mail.google.com/mail/u/0/#inbox/18e1341eb873c173/18e2eb2eafde1785",
+        "Log outreach notes",
+        "No"
+      ]
+    ]
+  },
+  "Templates": {
+    "row_count": 2,
+    "headers": [
+      "Name",
+      "Type",
+      "Subject",
+      "Body",
+      "Last Used"
+    ],
+    "samples": [
+      [
+        "Brand DM",
+        "Brand",
+        "",
+        "Hey [Brand]! I'm EMMMA, alt-pop artist based between London and Brazil. Obsessed with your brand and would love to explore a creative collab. Just dropped my debut single Honey with a Brazil-shot music video. Think our aesthetics align perfectly. Would love to chat! @emmmasays",
+        "2026-04-15"
+      ],
+      [
+        "Brand Email",
+        "Brand",
+        "Artist Partnership Opportunity: EMMMA x [Brand]",
+        "Hi [Name],\n\nI'm reaching out from ROLLON ENT on behalf of our artist EMMMA — an alt-pop artist with a striking Brazilian visual identity, currently building momentum with her debut campaign.\n\nEMMMA's 2026 release slate includes five singles — Honey, Russian Roulette, Experiment, Fall From Grace, and Porcelain — each accompanied by a music video shot on location in Brazil. Her aesthetic is bold, cinematic, and deeply tied to her Brazilian-British identity.\n\nCurrent stats and activity:\n- 16K Instagram followers (@emmmasays)\n- UK headline tour April/May 2026: Glasgow, London (The Grace), Bristol, Manchester\n- Growing press coverage and playlist momentum\n\nWe'd love to explore a partnership with [Brand]. Potential collaboration formats include:\n- Content creation and social campaign integration\n- Campaign sync licensing\n- Gifting program\n- Brand ambassador relationship\n\nI'd be happy to share EMMMA's one-sheet and latest music video for your review.\n\nLooking forward to connecting.\n\nBest,\nCelina Rollon\nROLLON ENT\ncelina@rollonent.com\n+1 (747) 258-5952\nwww.rollonent.com",
+        "2026-04-15"
+      ]
+    ]
+  },
+  "Playlists": {
+    "row_count": 0,
+    "headers": [
+      "ID",
+      "Name",
+      "Description",
+      "Song IDs",
+      "Song Data",
+      "Created",
+      "Created By",
+      "Views",
+      "Status"
+    ],
+    "samples": []
+  },
+  "Invoices": {
+    "row_count": 277,
+    "headers": [
+      "Invoice No",
+      "Entity",
+      "Date",
+      "Client",
+      "Description",
+      "Amount",
+      "Expenses",
+      "Total",
+      "Currency",
+      "COMP GBP",
+      "Exchange",
+      "COMP + Exchange Total",
+      "Status",
+      "Due Date",
+      "Payment Date",
+      "Year",
+      "Category",
+      "Payee Name",
+      "Email",
+      "Commission",
+      "Celina Comms",
+      "Notes",
+      "Airtable ID"
+    ],
+    "samples": [
+      [
+        "ROL2136",
+        "ROLLON ENT",
+        "",
+        "Grandpa's Beans",
+        "Ashnikko : UK Pre-Pro Fees",
+        "2500",
+        "20",
+        "2520",
+        "USD",
+        "",
+        "",
+        "2500",
+        "Paid",
+        "",
+        "",
+        "2021",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "rec06b0sH7H04tfrr"
+      ],
+      [
+        "ROL2402",
+        "ROLLON ENT",
+        "2024-01-15",
+        "Julia Peralta",
+        "Jan Consultancy",
+        "5000",
+        "",
+        "5000",
+        "USD",
+        "",
+        "",
+        "5000",
+        "Paid",
+        "2024-01-21",
+        "",
+        "2024",
+        "",
+        "Jules",
+        "celina@rollonent.com",
+        "",
+        "",
+        "",
+        "rec0XpkLFZ0KeU5k1"
+      ],
+      [
+        "ROL2129",
+        "ROLLON ENT",
+        "",
+        "LAG Rock + Pop",
+        "Panalist Fee",
+        "300",
+        "",
+        "300",
+        "USD",
+        "",
+        "",
+        "300",
+        "Paid",
+        "",
+        "",
+        "2021",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "rec0kRVr0iB1ZVEs4"
+      ]
+    ]
+  },
+  "Views": {
+    "row_count": 3,
+    "headers": [
+      "Page",
+      "ViewData",
+      "Updated"
+    ],
+    "samples": [
+      [
+        "pitch",
+        "{\"All\": {\"filters\": [], \"visibleCols\": [\"Name\", \"Field\", \"Tags\", \"Genre\", \"City\", \"Email\", \"Record Label\", \"Last Outreach\", \"Outreach Notes\"], \"sort\": \"\", \"dir\": \"asc\", \"group\": \"\", \"groupDir\": \"asc\"}, \"EMMMA RELEASES\": {\"filters\": [], \"visibleCols\": [\"Name\", \"Field\", \"Tags\", \"Genre\", \"City\", \"Email\", \"Record Label\", \"Last Outreach\", \"Outreach Notes\"], \"sort\": \"\", \"dir\": \"asc\", \"group\": \"\", \"groupDir\": \"asc\"}}",
+        "2026-04-16 8:16"
+      ],
+      [
+        "directory",
+        "[{\"filters\": [{\"col\": \"Field\", \"op\": \"contains_any\", \"val\": \"MGMT,Record A&R,Publishing A&R\"}, {\"col\": \"Tags\", \"op\": \"contains_any\", \"val\": \"Dance Pitch\"}, {\"col\": \"Tags\", \"op\": \"does_not_contain\", \"val\": \"Dont Pitch\"}, {\"col\": \"Tags\", \"op\": \"does_not_contain\", \"val\": \"Need Email\"}, {\"col\": \"Tags\", \"op\": \"does_not_contain\", \"val\": \"Blocked\"}], \"visibleCols\": [\"Name\", \"Field\", \"Tags\", \"Genre\", \"City\", \"Email\", \"Record Label\", \"MGMT Company\", \"Publishing Company\", \"Last Outreach\", \"Works With\"], \"sort\": \"\", \"dir\": \"asc\", \"group\": \"\", \"groupDir\": \"asc\"}]",
+        "2026-04-16 8:14"
+      ],
+      [
+        "songs",
+        "{\"All\": {\"dir\": \"desc\", \"filters\": [], \"sort\": \"Written Date\", \"visibleCols\": [\"Title\", \"Written Date\", \"Tag\", \"Audio Status\", \"Song Admin\", \"Lyrics\", \"Lyrics Docs\", \"Songwriter Credits\", \"Artist\", \"Producer\"]}, \"EMMMA RELEASES\": {\"dir\": \"desc\", \"filters\": [{\"col\": \"Artist\", \"op\": \"contains_any\", \"val\": \"EMMMA\"}, {\"col\": \"Project\", \"op\": \"contains_any\", \"val\": \"2026 Album,Secondary Character EP,Wednesday's Child EP\"}, {\"col\": \"Format\", \"op\": \"does_not_contain\", \"val\": \"Video\"}], \"group\": \"\", \"groupDir\": \"asc\", \"sort\": \"Release Date\", \"visibleCols\": [\"Title\", \"Songwriter Credits\", \"Artist\", \"Record Label\", \"Format\", \"Mixing Engineer\", \"Mastering Engineer\", \"Release Date\", \"Audio Status\", \"ISRC\", \"CAT NO\", \"GTIN/Barcode\", \"Master Splits\", \"Label Copy\", \"Pub Credit\", \"Writer IPI\", \"Publishing IPI\"]}, \"ROLLON x RIGHTSBRIDGE\": {\"filters\": [{\"col\": \"Artist\", \"op\": \"contains_any\", \"val\": \"EMMMA\"}, {\"col\": \"Project\", \"op\": \"contains_any\", \"val\": \"2026 Album,Secondary Character EP,Wednesday's Child EP\"}, {\"col\": \"Format\", \"op\": \"does_not_contain\", \"val\": \"Video\"}], \"visibleCols\": [\"Title\", \"Written Date\", \"Tag\", \"Audio Status\", \"Song Admin\", \"Lyrics\", \"Lyrics Docs\", \"Songwriter Credits\", \"Artist\", \"Producer\"], \"sort\": \"[\\u2713] Tag\", \"dir\": \"desc\", \"group\": \"\", \"groupDir\": \"asc\"}}",
+        "2026-04-15 18:00"
+      ]
+    ]
+  },
+  "Scout Leads": {
+    "row_count": 0,
+    "headers": [
+      "Type",
+      "Name",
+      "Genre",
+      "City",
+      "Listeners",
+      "Growth",
+      "Social",
+      "Notes",
+      "Tags",
+      "Status",
+      "Headliner",
+      "Dates",
+      "Cities",
+      "Venue",
+      "Capacity",
+      "Agent Contact",
+      "Project",
+      "Supervisor",
+      "Mood",
+      "Deadline",
+      "Date Added"
+    ],
+    "samples": []
+  }
+}
