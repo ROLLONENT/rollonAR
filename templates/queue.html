@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}ROLLON Q Dashboard{% endblock %}
+{% block content %}
+<div class="queue-page" style="padding:24px;max-width:1400px;margin:0 auto;color:#e6e6e8;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+
+<header style="display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px">
+  <div>
+    <h1 style="margin:0;font-size:26px;color:#d4a853">ROLLON Q Watchdog</h1>
+    <div style="color:#888;font-size:13px;margin-top:4px">
+      state file: <code id="q-state-path" style="color:#888"></code>
+      <span id="q-state-stamp" style="margin-left:12px"></span>
+    </div>
+  </div>
+  <div id="q-status-pill" class="q-pill q-pill-unknown" style="padding:10px 22px;border-radius:999px;font-size:18px;font-weight:700;letter-spacing:1px">UNKNOWN</div>
+</header>
+
+<section style="display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:20px">
+  <div class="q-card" style="background:#1a1a1f;border:1px solid #2a2a32;border-radius:8px;padding:18px">
+    <h2 style="margin:0 0 12px;font-size:16px;color:#d4a853">Active subprocess</h2>
+    <div id="q-active-empty" style="color:#666;font-size:14px;display:none">No subprocess running.</div>
+    <dl id="q-active-body" style="margin:0;display:grid;grid-template-columns:140px 1fr;row-gap:8px;column-gap:12px;font-size:14px">
+      <dt style="color:#888">Prompt ID</dt><dd id="q-active-id" style="margin:0"></dd>
+      <dt style="color:#888">PID</dt><dd id="q-active-pid" style="margin:0"></dd>
+      <dt style="color:#888">Phase</dt><dd id="q-active-phase" style="margin:0"></dd>
+      <dt style="color:#888">Elapsed</dt><dd id="q-active-elapsed" style="margin:0"></dd>
+      <dt style="color:#888">Last heartbeat</dt><dd id="q-active-heartbeat" style="margin:0"></dd>
+      <dt style="color:#888">CPU percent</dt><dd id="q-active-cpu" style="margin:0"></dd>
+      <dt style="color:#888">Stdout bytes</dt><dd id="q-active-bytes" style="margin:0"></dd>
+      <dt style="color:#888">Strike count</dt><dd id="q-active-strikes" style="margin:0"></dd>
+      <dt style="color:#888">Last line</dt><dd id="q-active-line" style="margin:0;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#bbb"></dd>
+    </dl>
+    <div style="margin-top:18px;display:flex;gap:10px">
+      <button id="q-kill" class="q-btn q-btn-danger" style="background:#b02020;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-weight:700;cursor:pointer">KILL SUBPROCESS</button>
+      <button id="q-resume" class="q-btn q-btn-ok" style="background:#2a7a3a;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-weight:700;cursor:pointer">START NEXT QUEUED</button>
+      <button id="q-pause" class="q-btn" style="background:#444;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-weight:700;cursor:pointer">PAUSE</button>
+    </div>
+  </div>
+  <div class="q-card" style="background:#1a1a1f;border:1px solid #2a2a32;border-radius:8px;padding:18px">
+    <h2 style="margin:0 0 12px;font-size:16px;color:#d4a853">Queue</h2>
+    <div style="font-size:40px;font-weight:700;line-height:1;color:#e6e6e8" id="q-depth">0</div>
+    <div style="color:#888;font-size:13px;margin-top:4px">items queued</div>
+    <div style="color:#888;font-size:12px;margin-top:16px">Next up:</div>
+    <ul id="q-preview" style="list-style:none;padding:0;margin:8px 0 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#bbb"></ul>
+    <div style="color:#888;font-size:12px;margin-top:16px">Last commit (working dir):</div>
+    <div id="q-last-commit" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#bbb;margin-top:4px"></div>
+  </div>
+</section>
+
+<section class="q-card" style="background:#1a1a1f;border:1px solid #2a2a32;border-radius:8px;padding:18px;margin-bottom:20px">
+  <h2 style="margin:0 0 12px;font-size:16px;color:#d4a853">Recent alarms</h2>
+  <div id="q-alarms-empty" style="color:#666;font-size:14px">No alarms recorded.</div>
+  <table id="q-alarms-table" style="width:100%;border-collapse:collapse;font-size:13px;display:none">
+    <thead><tr style="text-align:left;color:#888">
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">Time</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">Level</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">Event</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">Prompt</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">PID</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #2a2a32">Action</th>
+    </tr></thead>
+    <tbody id="q-alarms-body"></tbody>
+  </table>
+</section>
+
+<section class="q-card" style="background:#1a1a1f;border:1px solid #2a2a32;border-radius:8px;padding:18px">
+  <h2 style="margin:0 0 12px;font-size:16px;color:#d4a853">Q log (last 50 lines today)</h2>
+  <pre id="q-log" style="background:#0e0e12;color:#cfcfd2;padding:12px;border-radius:6px;max-height:340px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:11px;margin:0;white-space:pre-wrap"></pre>
+</section>
+
+<div id="q-confirm" role="dialog" aria-modal="true" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:9999">
+  <div style="background:#1a1a1f;border:1px solid #2a2a32;border-radius:10px;max-width:480px;width:92%;padding:22px">
+    <h3 id="q-confirm-title" style="margin:0 0 10px;color:#d4a853">Confirm</h3>
+    <p id="q-confirm-body" style="margin:0 0 20px;color:#cfcfd2"></p>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button id="q-confirm-cancel" style="background:#333;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer">Cancel</button>
+      <button id="q-confirm-ok" style="background:#b02020;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-weight:700;cursor:pointer">Confirm</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<style>
+.q-pill-ALIVE { background:#2a7a3a; color:#fff }
+.q-pill-IDLE { background:#4a4a54; color:#fff }
+.q-pill-PAUSED { background:#7a6a2a; color:#fff }
+.q-pill-STALLED { background:#b02020; color:#fff }
+.q-pill-UNKNOWN { background:#333; color:#888 }
+.q-pill-unknown { background:#333; color:#888 }
+.q-btn:hover { filter:brightness(1.15) }
+.q-btn:active { transform:translateY(1px) }
+</style>
+
+<script>
+(function(){
+  const stamp = document.getElementById('q-state-stamp');
+  const pill = document.getElementById('q-status-pill');
+  const activeBody = document.getElementById('q-active-body');
+  const activeEmpty = document.getElementById('q-active-empty');
+  const depth = document.getElementById('q-depth');
+  const preview = document.getElementById('q-preview');
+  const commit = document.getElementById('q-last-commit');
+  const alarmsTable = document.getElementById('q-alarms-table');
+  const alarmsBody = document.getElementById('q-alarms-body');
+  const alarmsEmpty = document.getElementById('q-alarms-empty');
+  const logEl = document.getElementById('q-log');
+  const pathEl = document.getElementById('q-state-path');
+
+  function fmt(s){ return s == null ? '' : String(s) }
+  function secs(n){ if(n == null) return ''; const v = Math.round(Number(n)); const h = Math.floor(v/3600); const m = Math.floor((v%3600)/60); const s = v%60; return (h?h+'h ':'')+(m?m+'m ':'')+s+'s' }
+
+  async function refresh(){
+    try{
+      const r = await fetch('/api/queue-status', {cache:'no-store'});
+      if(!r.ok){ pill.textContent = 'HTTP ' + r.status; pill.className = 'q-pill q-pill-UNKNOWN'; return }
+      const d = await r.json();
+      render(d);
+    }catch(e){
+      pill.textContent = 'OFFLINE';
+      pill.className = 'q-pill q-pill-STALLED';
+    }
+  }
+
+  function render(d){
+    const status = d.status || 'UNKNOWN';
+    pill.textContent = status;
+    pill.className = 'q-pill q-pill-' + status;
+    pathEl.textContent = '~/tools/rollon-queue/state.json';
+    stamp.textContent = d.updated_iso ? 'updated ' + d.updated_iso : '';
+
+    const a = d.active;
+    if(a){
+      activeBody.style.display = 'grid';
+      activeEmpty.style.display = 'none';
+      document.getElementById('q-active-id').textContent = fmt(a.prompt_id);
+      document.getElementById('q-active-pid').textContent = fmt(a.pid) + (a.pid_alive === false ? '  (process gone)' : '');
+      document.getElementById('q-active-phase').textContent = fmt(a.phase) || '(unknown)';
+      document.getElementById('q-active-elapsed').textContent = secs(a.elapsed_s);
+      document.getElementById('q-active-heartbeat').textContent = fmt(a.last_heartbeat_iso) || '(never)';
+      document.getElementById('q-active-cpu').textContent = fmt(a.cpu_percent) + '%';
+      document.getElementById('q-active-bytes').textContent = fmt(a.stdout_bytes);
+      document.getElementById('q-active-strikes').textContent = fmt(a.strike_count) + (a.stalled ? '  STALLED' : '');
+      document.getElementById('q-active-line').textContent = fmt(a.last_stdout_line);
+    } else {
+      activeBody.style.display = 'none';
+      activeEmpty.style.display = 'block';
+    }
+
+    depth.textContent = d.queue_depth || 0;
+    preview.innerHTML = '';
+    (d.queue_preview || []).forEach(function(pid){
+      const li = document.createElement('li'); li.textContent = pid; preview.appendChild(li);
+    });
+
+    commit.textContent = d.last_commit || '(unknown)';
+
+    const alarms = d.alarms || [];
+    if(alarms.length === 0){
+      alarmsTable.style.display = 'none';
+      alarmsEmpty.style.display = 'block';
+    } else {
+      alarmsTable.style.display = 'table';
+      alarmsEmpty.style.display = 'none';
+      alarmsBody.innerHTML = '';
+      alarms.forEach(function(al){
+        const tr = document.createElement('tr');
+        const cells = [
+          al.iso || '',
+          al.level || '',
+          al.event || '',
+          al.prompt_id || '',
+          al.pid != null ? al.pid : '',
+          al.action || '',
+        ];
+        cells.forEach(function(v){
+          const td = document.createElement('td');
+          td.textContent = v;
+          td.style.padding = '6px 8px';
+          td.style.borderBottom = '1px solid #222';
+          tr.appendChild(td);
+        });
+        if((al.level || '').toUpperCase() === 'CRITICAL') tr.style.color = '#ff8a8a';
+        alarmsBody.appendChild(tr);
+      });
+    }
+
+    const lines = d.log_tail || [];
+    logEl.textContent = lines.join('\n');
+  }
+
+  function openConfirm(title, body, onConfirm){
+    const overlay = document.getElementById('q-confirm');
+    document.getElementById('q-confirm-title').textContent = title;
+    document.getElementById('q-confirm-body').textContent = body;
+    overlay.style.display = 'flex';
+    const cancel = document.getElementById('q-confirm-cancel');
+    const ok = document.getElementById('q-confirm-ok');
+    function close(){ overlay.style.display = 'none'; cancel.removeEventListener('click', close); ok.removeEventListener('click', go) }
+    function go(){ close(); onConfirm() }
+    cancel.addEventListener('click', close);
+    ok.addEventListener('click', go);
+  }
+
+  async function postAction(path, label){
+    try{
+      const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}});
+      const d = await r.json();
+      if(d.ok){ alert(label + ' sent'); refresh() }
+      else { alert(label + ' failed: ' + (d.error || 'unknown')) }
+    }catch(e){ alert(label + ' error: ' + e) }
+  }
+
+  document.getElementById('q-kill').addEventListener('click', function(){
+    openConfirm('Kill subprocess', 'This sends SIGTERM to the running Claude Code subprocess. Q will move to the next queued prompt. Continue?', function(){ postAction('/api/queue-kill', 'KILL') });
+  });
+  document.getElementById('q-resume').addEventListener('click', function(){
+    postAction('/api/queue-resume', 'RESUME');
+  });
+  document.getElementById('q-pause').addEventListener('click', function(){
+    postAction('/api/queue-pause', 'PAUSE');
+  });
+
+  refresh();
+  setInterval(refresh, 10000);
+})();
+</script>
+{% endblock %}

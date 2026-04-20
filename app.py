@@ -7038,6 +7038,173 @@ def run_filter_smoke_tests():
     return results
 
 
+# ==================== ROLLON Q WATCHDOG DASHBOARD (v38) ====================
+# Reads live state from /Users/celinarollon/tools/rollon-queue/state.json
+# (written by watcher_v2.py via watchdog.WatchdogState). Kill/resume actions
+# post control commands to #rollonbots through the Slack bot token; the Q
+# watcher picks them up on its normal poll cadence.
+
+ROLLON_Q_STATE_PATH = os.environ.get(
+    'ROLLON_Q_STATE_PATH',
+    os.path.expanduser('~/tools/rollon-queue/state.json')
+)
+ROLLON_Q_LOG_DIR = os.environ.get(
+    'ROLLON_Q_LOG_DIR',
+    os.path.expanduser('~/tools/rollon-queue/logs')
+)
+ROLLON_Q_CHANNEL_ID = os.environ.get('ROLLON_Q_CHANNEL_ID', 'C0ATRUE7JS1')
+
+
+def _q_read_state():
+    try:
+        with open(ROLLON_Q_STATE_PATH, 'r', encoding='utf-8') as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logging.warning(f'queue state read failed: {e}')
+        return None
+
+
+def _q_read_log_tail(lines=50):
+    from datetime import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        today = _dt.now(_ZI('Europe/London')).strftime('%Y-%m-%d')
+    except Exception:
+        today = _dt.utcnow().strftime('%Y-%m-%d')
+    path = os.path.join(ROLLON_Q_LOG_DIR, f'q_v2_{today}.jsonl')
+    try:
+        if not os.path.exists(path):
+            return []
+        with open(path, 'rb') as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            read = min(size, 128 * 1024)
+            fh.seek(size - read)
+            chunk = fh.read().decode('utf-8', errors='replace')
+        return chunk.splitlines()[-lines:]
+    except Exception as e:
+        logging.warning(f'queue log read failed: {e}')
+        return []
+
+
+def _q_process_alive(pid):
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _q_post_slack_control(text):
+    """Post a control command to #rollonbots so watcher_v2 picks it up."""
+    token = os.environ.get('SLACK_BOT_TOKEN', '')
+    if not token:
+        env_path = os.path.expanduser('~/.rollon-queue/.env')
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, 'r', encoding='utf-8') as fh:
+                    for raw in fh:
+                        line = raw.strip()
+                        if line.startswith('SLACK_BOT_TOKEN='):
+                            token = line.split('=', 1)[1].strip().strip('"').strip("'")
+                            break
+            except Exception:
+                pass
+    if not token:
+        return False, 'SLACK_BOT_TOKEN unavailable'
+    try:
+        import urllib.request
+        import urllib.parse
+        data = urllib.parse.urlencode({
+            'channel': ROLLON_Q_CHANNEL_ID,
+            'text': text,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://slack.com/api/chat.postMessage',
+            data=data,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode('utf-8', errors='replace'))
+        return bool(body.get('ok')), body.get('error')
+    except Exception as e:
+        return False, str(e)
+
+
+@app.route('/queue')
+@login_required
+def queue_dashboard():
+    if session.get('role') != 'admin':
+        return redirect(url_for('dashboard'))
+    return render_template('queue.html')
+
+
+@app.route('/api/queue-status')
+@login_required
+def api_queue_status():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'Captain access required'}), 403
+    state = _q_read_state() or {}
+    active = state.get('active') or None
+    if active and not _q_process_alive(active.get('pid')):
+        active = dict(active)
+        active['pid_alive'] = False
+    elif active:
+        active['pid_alive'] = True
+    return jsonify({
+        'q_version': state.get('q_version'),
+        'status': state.get('status', 'UNKNOWN'),
+        'updated_iso': state.get('updated_iso'),
+        'active': active,
+        'queue_depth': state.get('queue_depth', 0),
+        'queue_preview': state.get('queue_preview', []),
+        'paused': bool(state.get('paused')),
+        'alarms': state.get('alarms', [])[:10],
+        'last_commit': state.get('last_commit'),
+        'log_tail': _q_read_log_tail(50),
+        'state_file_present': state != {},
+    })
+
+
+@app.route('/api/queue-kill', methods=['POST'])
+@login_required
+def api_queue_kill():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'Captain access required'}), 403
+    state = _q_read_state() or {}
+    active = state.get('active') or {}
+    prompt_id = active.get('prompt_id')
+    if not prompt_id:
+        return jsonify({'ok': False, 'error': 'no active prompt'}), 400
+    ok, err = _q_post_slack_control(f'KILL {prompt_id}')
+    return jsonify({'ok': ok, 'error': err, 'prompt_id': prompt_id})
+
+
+@app.route('/api/queue-resume', methods=['POST'])
+@login_required
+def api_queue_resume():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'Captain access required'}), 403
+    ok, err = _q_post_slack_control('RESUME')
+    return jsonify({'ok': ok, 'error': err})
+
+
+@app.route('/api/queue-pause', methods=['POST'])
+@login_required
+def api_queue_pause():
+    if session.get('role') != 'admin':
+        return jsonify({'error': 'Captain access required'}), 403
+    ok, err = _q_post_slack_control('PAUSE')
+    return jsonify({'ok': ok, 'error': err})
+
+
 if __name__ == '__main__':
     print("Building ID resolver cache...")
     try: resolver.rebuild(); print(f"  Cached {len(resolver._cache)} record IDs")
