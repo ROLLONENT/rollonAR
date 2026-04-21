@@ -5,6 +5,8 @@
    F2 Cmd+C / Cmd+Shift+C type aware serialization
    F3 Cmd+V type aware parsing, computed cell guard
    F4 drag fill handle (literal copy, single cell across range)
+   F5 multi cell range (click drag, shift click, Cmd+A) + range copy / paste /
+      delete + right click context menu
    --------------------------------------------------------------------------
    Replaces the V36.1 cellSelect/_selectedCell block previously in core.js.
    The selection model is global: any <td data-field> in any rendered grid
@@ -16,8 +18,12 @@
 
   // ---- State ----
   let activeCell = null;      // primary cell (TD) — the currently selected cell
+  let rangeAnchor = null;     // mouse-down corner of a range
+  let rangeFoot = null;       // mouse-up corner of a range (== activeCell)
+  let dragging = false;       // mouse-drag range selection in progress
   let dragFilling = false;    // fill-handle drag in progress
   let fillSource = null;      // the source cell whose value will be filled
+  let fillSourceCells = [];   // F5: multi-cell drag-fill source pattern
   let lastUndo = null;        // { cells:[{ri,field,prev,td,table}] } for Cmd+Z
 
   // ---- Small helpers (depend on globals from core.js) ----
@@ -41,25 +47,41 @@
 
   // ---- Selection primitives ----
   function clearClasses(){
-    document.querySelectorAll('td.cell-selected').forEach(c => c.classList.remove('cell-selected'));
+    document.querySelectorAll('td.cell-selected, td.cell-range').forEach(c => {
+      c.classList.remove('cell-selected','cell-range');
+    });
   }
   function removeFillHandle(){
     document.querySelectorAll('.cell-fill-handle').forEach(h => h.remove());
   }
+  function paintRange(a,b){
+    clearClasses();
+    if(!a || !b) return;
+    const cells = getCellsInRange(a,b);
+    cells.forEach(td => td.classList.add('cell-range'));
+    (b || a).classList.add('cell-selected');
+  }
   function selectSingle(td){
     removeFillHandle();
     clearClasses();
-    if(!td){ activeCell = null; window._selectedCell = null; return; }
+    if(!td){ activeCell = null; rangeAnchor = null; rangeFoot = null; window._selectedCell = null; return; }
     td.classList.add('cell-selected');
-    activeCell = td;
+    activeCell = td; rangeAnchor = td; rangeFoot = td;
     attachFillHandle(td);
     // Keep compat with core.js inline-edit blur path that calls cellSelect(td)
     window._selectedCell = td;
   }
+  function selectRange(a,b){
+    removeFillHandle();
+    paintRange(a,b);
+    activeCell = b; rangeAnchor = a; rangeFoot = b;
+    attachFillHandle(b);
+    window._selectedCell = b;
+  }
   function deselect(){
     removeFillHandle();
     clearClasses();
-    activeCell = null;
+    activeCell = null; rangeAnchor = null; rangeFoot = null;
     window._selectedCell = null;
   }
   function attachFillHandle(td){
@@ -85,6 +107,25 @@
     const cells = Array.from(tr.querySelectorAll('td[data-field]'));
     const c = cells.indexOf(td);
     return { r, c, rows, tr, tbody };
+  }
+  function getCellsInRange(a,b){
+    if(!sameGrid(a,b)) return [a].filter(Boolean);
+    const ca = cellCoord(a), cb = cellCoord(b);
+    if(!ca || !cb) return [a];
+    const r1 = Math.min(ca.r, cb.r), r2 = Math.max(ca.r, cb.r);
+    const c1 = Math.min(ca.c, cb.c), c2 = Math.max(ca.c, cb.c);
+    const out = [];
+    for(let r=r1; r<=r2; r++){
+      const cells = Array.from(ca.rows[r].querySelectorAll('td[data-field]'));
+      for(let c=c1; c<=c2; c++){
+        if(cells[c]) out.push(cells[c]);
+      }
+    }
+    return out;
+  }
+  function currentRangeCells(){
+    if(!rangeAnchor || !rangeFoot) return activeCell ? [activeCell] : [];
+    return getCellsInRange(rangeAnchor, rangeFoot);
   }
 
   // ---- Navigation ----
@@ -161,9 +202,10 @@
     return rows.map(r => r.map(td => tsvEscape(serializeCell(td))).join('\t')).join('\n');
   }
   function doCopy(format){
-    const cells = activeCell ? [activeCell] : [];
+    const cells = currentRangeCells();
     if(!cells.length) return;
-    const fmt = format || 'plain';
+    // Single-cell defaults to plain text; range defaults to TSV.
+    const fmt = format || (cells.length>1 ? 'tsv' : 'plain');
     const payload = copyCells(cells, fmt);
     if(!payload){ toastMsg('Nothing to copy','error'); return; }
     navigator.clipboard.writeText(payload).then(()=>{
@@ -171,7 +213,7 @@
         td.classList.add('cell-copied');
         setTimeout(()=> td.classList.remove('cell-copied'), 600);
       });
-      toastMsg('Copied');
+      toastMsg(cells.length>1 ? ('Copied '+cells.length+' cells') : 'Copied');
     }).catch(()=> toastMsg('Clipboard blocked','error'));
   }
 
@@ -292,7 +334,8 @@
     return [[s]];
   }
   async function doPaste(){
-    if(!activeCell) return;
+    const cells = currentRangeCells();
+    if(!cells.length) return;
     let text = '';
     try{ text = await navigator.clipboard.readText(); }
     catch(e){ toastMsg('Clipboard blocked','error'); return; }
@@ -300,28 +343,23 @@
     const grid = parseClipboardGrid(text);
     const rowsN = grid.length, colsN = grid[0] ? grid[0].length : 0;
 
-    // Single-cell clipboard into single-cell selection: type-aware paste.
+    // Single-cell clipboard into a range: drag-fill semantics (literal copy).
     if(rowsN===1 && colsN===1){
-      if(isReadOnlyCell(activeCell)){
-        toastMsg('This cell is computed');
+      if(cells.length===1){
+        if(isReadOnlyCell(cells[0])){ toastMsg('This cell is computed'); return; }
+        const res = await writeCell(cells[0], grid[0][0]);
+        if(res.ok) toastMsg('Saved');
         return;
       }
-      const res = await writeCell(activeCell, grid[0][0]);
-      if(res.ok) toastMsg('Saved');
+      await fillRangeWithValue(cells, grid[0][0]);
       return;
     }
-    // Multi-cell TSV: paste starting at the active cell as the top-left anchor.
-    const ac = (function(){
-      const tr = activeCell.closest('tr');
-      const tbody = tr && tr.parentElement;
-      if(!tbody) return null;
-      const rows = Array.from(tbody.querySelectorAll('tr'));
-      const r = rows.indexOf(tr);
-      const cells = Array.from(tr.querySelectorAll('td[data-field]'));
-      const c = cells.indexOf(activeCell);
-      return { r, c, rows };
-    })();
-    if(!ac){ return; }
+    // Multi-cell TSV: paste starting at the rangeAnchor (top-left of selection).
+    const anchor = rangeAnchor || activeCell;
+    if(!anchor) return;
+    const ac = cellCoord(anchor);
+    if(!ac) return;
+    const undoBucket = [];
     let written = 0, skipped = 0;
     for(let r=0; r<rowsN; r++){
       const tr = ac.rows[ac.r + r];
@@ -330,10 +368,15 @@
       for(let c=0; c<colsN; c++){
         const td = targetCells[ac.c + c];
         if(!td) continue;
+        const field = td.dataset.field, ri = parseInt(td.dataset.ri,10);
+        const cached = getCache(ri);
+        const prev = cached ? (cached[field]||'') : '';
         const res = await writeCell(td, grid[r][c]);
-        if(res.ok) written++; else skipped++;
+        if(res.ok){ undoBucket.push({ td, field, ri, prev, next:grid[r][c], table:currentTable() }); written++; }
+        else skipped++;
       }
     }
+    if(undoBucket.length){ lastUndo = { cells: undoBucket }; }
     toastMsg('Pasted '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
   }
 
@@ -351,6 +394,8 @@
     e.preventDefault();
     e.stopPropagation();
     if(!activeCell) return;
+    // Source = current selection (single cell or multi-cell range pattern).
+    fillSourceCells = currentRangeCells();
     fillSource = activeCell;
     dragFilling = true;
     document.body.classList.add('cell-fill-dragging');
@@ -362,10 +407,12 @@
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const target = el && el.closest && el.closest('td[data-field]');
     if(!target || !sameGrid(target, activeCell)) return;
-    const p1 = cellCoord(activeCell), pt = cellCoord(target);
-    if(!p1 || !pt) return;
-    const r1 = Math.min(p1.r, pt.r), r2 = Math.max(p1.r, pt.r);
-    const c1 = Math.min(p1.c, pt.c), c2 = Math.max(p1.c, pt.c);
+    const src = (fillSourceCells && fillSourceCells.length) ? fillSourceCells : [activeCell];
+    const srcFirst = src[0], srcLast = src[src.length-1];
+    const p1 = cellCoord(srcFirst), p2 = cellCoord(srcLast), pt = cellCoord(target);
+    if(!p1 || !p2 || !pt) return;
+    const r1 = Math.min(p1.r, p2.r, pt.r), r2 = Math.max(p1.r, p2.r, pt.r);
+    const c1 = Math.min(p1.c, p2.c, pt.c), c2 = Math.max(p1.c, p2.c, pt.c);
     const rows = p1.rows;
     document.querySelectorAll('td.cell-fill-ghost').forEach(c => c.classList.remove('cell-fill-ghost'));
     for(let r=r1; r<=r2; r++){
@@ -382,9 +429,14 @@
     dragFilling = false;
     const ghostCells = Array.from(document.querySelectorAll('td.cell-fill-ghost'));
     ghostCells.forEach(c => c.classList.remove('cell-fill-ghost'));
-    if(!ghostCells.length || !fillSource) return;
-    const srcVal = serializeSourceValue(fillSource);
-    await fillRangeWithValue(ghostCells, srcVal);
+    if(!ghostCells.length) return;
+    const source = (fillSourceCells && fillSourceCells.length) ? fillSourceCells : [activeCell];
+    if(source.length === 1){
+      await fillRangeWithValue(ghostCells, serializeSourceValue(source[0]));
+    } else {
+      // Tile the multi-cell source pattern across the ghost range (F5).
+      await fillRangeWithPattern(ghostCells, source);
+    }
   }
   async function fillRangeWithValue(cells, value){
     const undoBucket = [];
@@ -434,6 +486,71 @@
     toastMsg('Undid '+batch.length+' cell'+(batch.length===1?'':'s'));
   }
 
+  // ---- Multi-cell range fill (F5): drag-fill from a multi-cell source pattern ----
+  async function fillRangeWithPattern(cells, source){
+    if(!cells.length || !source.length) return;
+    const ac = cellCoord(cells[0]);
+    const sc0 = cellCoord(source[0]);
+    if(!ac || !sc0) return;
+    const srcRows = Math.max.apply(null, source.map(s => cellCoord(s).r)) - sc0.r + 1;
+    const srcCols = Math.max.apply(null, source.map(s => cellCoord(s).c)) - sc0.c + 1;
+    const srcMap = new Map();
+    source.forEach(s => {
+      const p = cellCoord(s);
+      srcMap.set((p.r - sc0.r)+':'+(p.c - sc0.c), serializeSourceValue(s));
+    });
+    const undoBucket = [];
+    let written = 0, skipped = 0;
+    for(const td of cells){
+      const p = cellCoord(td);
+      const dr = (p.r - ac.r) % srcRows;
+      const dc = (p.c - ac.c) % srcCols;
+      const value = srcMap.get(dr+':'+dc);
+      if(value==null) continue;
+      if(isReadOnlyCell(td)){ skipped++; continue; }
+      const field = td.dataset.field;
+      const ri = parseInt(td.dataset.ri, 10);
+      const table = currentTable();
+      const cached = getCache(ri);
+      const prev = cached ? (cached[field]||'') : '';
+      _gridSave(td, field, ri, table, value);
+      undoBucket.push({ td, field, ri, prev, next:value, table });
+      written++;
+    }
+    if(undoBucket.length){ lastUndo = { cells: undoBucket }; showUndoToast(undoBucket.length); }
+    toastMsg('Filled '+written+' cells'+(skipped ? ' (skipped '+skipped+' read only)' : ''));
+  }
+
+  // ---- Delete / clear (F5) ----
+  async function clearRange(cells){
+    if(!cells || !cells.length) return;
+    const undoBucket = [];
+    let written = 0, skipped = 0;
+    for(const td of cells){
+      if(isReadOnlyCell(td)){ skipped++; continue; }
+      const field = td.dataset.field, ri = parseInt(td.dataset.ri,10);
+      const cached = getCache(ri);
+      const prev = cached ? (cached[field]||'') : '';
+      const res = await writeCell(td, '');
+      if(res.ok){ undoBucket.push({ td, field, ri, prev, next:'', table:currentTable() }); written++; }
+      else skipped++;
+    }
+    if(undoBucket.length){ lastUndo = { cells: undoBucket }; }
+    toastMsg('Cleared '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
+  }
+
+  function selectAllInGrid(anchor){
+    const tbody = anchor.closest('tbody');
+    if(!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    if(!rows.length) return;
+    const first = rows[0].querySelector('td[data-field]');
+    const lastRow = rows[rows.length-1];
+    const lastCells = Array.from(lastRow.querySelectorAll('td[data-field]'));
+    const last = lastCells[lastCells.length-1];
+    if(first && last) selectRange(first, last);
+  }
+
   function openEditor(td){
     if(!td || isReadOnlyCell(td)) return;
     const field = td.dataset.field;
@@ -442,7 +559,7 @@
     if(typeof gridEdit === 'function') gridEdit(td, field, ri, table);
   }
 
-  // ---- Mouse: cell click ----
+  // ---- Mouse: cell click + range drag (F5) ----
   function onMouseDown(e){
     if(e.button !== 0) return;
     const td = e.target.closest('td[data-field]');
@@ -450,12 +567,38 @@
     if(isInsideEditor(e.target)) return;
     if(e.target.closest('.pill-x')) return;
     if(e.target.closest('.row-check, .expand-col, .expand-icon, a[href]')) return;
+    // Don't initiate range drag when clicking on the fill handle  that handler runs first
+    if(e.target.closest('.cell-fill-handle')) return;
+
+    const clickedOnPillLink = !!e.target.closest('.pill-link');
+
+    // Shift+click extends the range from the existing anchor.
     if(e.shiftKey && activeCell && sameGrid(activeCell, td)){
       e.preventDefault();
-      selectSingle(td);
+      selectRange(rangeAnchor || activeCell, td);
       return;
     }
     selectSingle(td);
+    // Clicking on a pill-link should still navigate; don't start a drag.
+    if(clickedOnPillLink) return;
+    // Begin a potential rectangular range drag. mousemove paints the range
+    // until mouseup ends it.
+    dragging = true;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp, { once:true });
+  }
+  function onMouseMove(e){
+    if(!dragging || !activeCell) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const td = el && el.closest && el.closest('td[data-field]');
+    if(!td || !sameGrid(td, activeCell)) return;
+    if(td !== rangeFoot){
+      selectRange(rangeAnchor || activeCell, td);
+    }
+  }
+  function onMouseUp(){
+    dragging = false;
+    document.removeEventListener('mousemove', onMouseMove);
   }
 
   // Single click handler: same-cell second click on an editable cell opens the editor.
@@ -478,6 +621,12 @@
     if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return;
     if(document.getElementById('prompt-modal') || document.getElementById('field-type-picker')) return;
 
+    // Cmd+A = select every cell in the active grid (F5).
+    if((e.metaKey || e.ctrlKey) && e.key==='a' && activeCell){
+      e.preventDefault();
+      selectAllInGrid(activeCell);
+      return;
+    }
     // Cmd+Z = undo last drag-fill / paste / clear batch (works without an active cell).
     if((e.metaKey || e.ctrlKey) && e.key==='z' && !e.shiftKey){
       if(lastUndo){ e.preventDefault(); doUndo(); return; }
@@ -513,6 +662,11 @@
       e.preventDefault();
       doPaste();
     }
+    else if(e.key==='Delete' || e.key==='Backspace'){
+      // F5: clear every cell in the current selection (skips read-only).
+      e.preventDefault();
+      clearRange(currentRangeCells());
+    }
     else if(e.key.length===1 && !e.metaKey && !e.ctrlKey && !e.altKey){
       // Type-to-edit: any printable character starts editing the current cell.
       if(activeCell.classList.contains('cell-editable')){
@@ -525,15 +679,108 @@
     }
   }
 
+  // ---- Right-click context menu (F5) ----
+  function onContextMenu(e){
+    const td = e.target.closest('td[data-field]');
+    if(!td) return;
+    if(e.target.closest('.pill-x, a[href]')) return;
+    if(!currentRangeCells().includes(td)) selectSingle(td);
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, td);
+  }
+  function showContextMenu(x, y, td){
+    const old = document.getElementById('cell-ctx-menu');
+    if(old) old.remove();
+    const tr = td.closest('tr');
+    const rangeMulti = currentRangeCells().length > 1;
+    const m = document.createElement('div');
+    m.id = 'cell-ctx-menu';
+    m.className = 'cell-ctx-menu';
+    m.style.cssText = 'position:fixed;left:'+x+'px;top:'+y+'px;z-index:4000;';
+    const items = [
+      { act:'copy',        label: rangeMulti ? 'Copy (TSV)' : 'Copy' },
+      { act:'copy-tsv',    label:'Copy as TSV' },
+      { act:'copy-csv',    label:'Copy as CSV' },
+      { act:'copy-json',   label:'Copy as JSON' },
+      { act:'sep' },
+      { act:'paste',       label:'Paste' },
+      { act:'fill-down',   label:'Fill down from here' },
+      { act:'clear',       label:'Clear cell' },
+      { act:'sep' },
+      { act:'row-tsv',     label:'Copy row as TSV' },
+      { act:'row-csv',     label:'Copy row as CSV' },
+      { act:'row-json',    label:'Copy row as JSON' }
+    ];
+    m.innerHTML = items.map(it => it.act==='sep'
+      ? '<div class="cell-ctx-sep"></div>'
+      : '<div class="cell-ctx-item" data-act="'+it.act+'">'+it.label+'</div>'
+    ).join('');
+    document.body.appendChild(m);
+    m.querySelectorAll('.cell-ctx-item').forEach(it => {
+      it.addEventListener('click', () => { runCtxAction(it.dataset.act, td, tr); m.remove(); });
+    });
+  }
+  function runCtxAction(act, td, tr){
+    switch(act){
+      case 'copy':       doCopy(); break;
+      case 'copy-tsv':   doCopy('tsv'); break;
+      case 'copy-csv':   doCopy('csv'); break;
+      case 'copy-json':  doCopy('json'); break;
+      case 'paste':      doPaste(); break;
+      case 'fill-down':  fillDownFrom(td); break;
+      case 'clear':      clearRange([td]); break;
+      case 'row-tsv':    copyRowAsTSV(tr); break;
+      case 'row-csv':    copyRowAsCSV(tr); break;
+      case 'row-json':   copyRowAsJSON(tr); break;
+    }
+  }
+  function fillDownFrom(td){
+    const co = cellCoord(td);
+    if(!co) return;
+    const srcVal = serializeSourceValue(td);
+    const targets = [];
+    for(let r=co.r+1; r<co.rows.length; r++){
+      const cells = Array.from(co.rows[r].querySelectorAll('td[data-field]'));
+      if(cells[co.c]) targets.push(cells[co.c]);
+    }
+    if(!targets.length){ toastMsg('Nothing below to fill'); return; }
+    fillRangeWithValue(targets, srcVal);
+  }
+  function copyRowAsCSV(tr){
+    if(!tr) return;
+    const cells = Array.from(tr.querySelectorAll('td[data-field]'));
+    const headers = cells.map(td => normHeader(td.dataset.field) || td.dataset.field);
+    const vals = cells.map(td => csvEscape(serializeCell(td)));
+    navigator.clipboard.writeText(headers.map(csvEscape).join(',')+'\n'+vals.join(','))
+      .then(() => toastMsg('Row copied as CSV'));
+  }
+  function copyRowAsJSON(tr){
+    if(!tr) return;
+    const cells = Array.from(tr.querySelectorAll('td[data-field]'));
+    const obj = {};
+    cells.forEach(td => { obj[normHeader(td.dataset.field) || td.dataset.field] = serializeCell(td); });
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2))
+      .then(() => toastMsg('Row copied as JSON'));
+  }
+
   // ---- Global handlers ----
   document.addEventListener('mousedown', onMouseDown);
   document.addEventListener('click', onClick);
   document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('contextmenu', onContextMenu);
+  document.addEventListener('scroll', () => {
+    const m = document.getElementById('cell-ctx-menu');
+    if(m) m.remove();
+  }, true);
+  document.addEventListener('click', e => {
+    const m = document.getElementById('cell-ctx-menu');
+    if(m && !m.contains(e.target)) m.remove();
+  });
   // Deselect when clicking outside any grid (but not inside modals/menus).
   document.addEventListener('mousedown', e => {
     if(!activeCell) return;
     if(e.target.closest('.data-grid')) return;
-    if(e.target.closest('.col-menu, .prompt-overlay, .modal, .tag-editor, .typeahead-wrap, .toast')) return;
+    if(e.target.closest('.col-menu, .prompt-overlay, #cell-ctx-menu, .cell-undo-toast, .modal, .tag-editor, .typeahead-wrap, .toast')) return;
     deselect();
   });
 
@@ -547,11 +794,16 @@
   window._cellMechanics = {
     state: () => ({ activeCell }),
     selectSingle, deselect, move,
+    range: () => currentRangeCells(),
     copy: doCopy,
     copyRow: copyRowAsTSV,
     paste: doPaste,
     parse: parseValueForType,
     fill: fillRangeWithValue,
+    fillPattern: fillRangeWithPattern,
+    clear: clearRange,
+    selectAll: selectAllInGrid,
+    selectRange,
     undo: doUndo
   };
 })();

@@ -704,6 +704,32 @@ body.cell-fill-dragging *{
   font:inherit;cursor:pointer;
 }
 
+/* ================================================================
+   v37.7 MULTI-CELL RANGE + RIGHT-CLICK CONTEXT MENU (F5)
+   ================================================================ */
+td.cell-range{
+  background:rgba(212,168,83,0.20)!important;
+  outline:1px solid rgba(212,168,83,0.45);outline-offset:-1px;
+  position:relative;z-index:1;
+}
+.cell-ctx-menu{
+  background:var(--bg-elev,#1b1b1f);
+  border:1px solid var(--border,#2a2a30);
+  border-radius:6px;padding:4px;min-width:200px;
+  box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px;
+}
+.cell-ctx-menu .cell-ctx-item{
+  padding:6px 12px;border-radius:4px;cursor:pointer;
+  color:var(--text-primary);
+}
+.cell-ctx-menu .cell-ctx-item:hover{
+  background:var(--accent-dim,rgba(212,168,83,0.15));
+  color:var(--accent,#d4a853);
+}
+.cell-ctx-menu .cell-ctx-sep{
+  height:1px;background:var(--border,#2a2a30);margin:4px 0;
+}
+
 /* V36.1 live search highlighter */
 .data-grid mark.live-hl{
   background:rgba(212,168,83,0.35);
