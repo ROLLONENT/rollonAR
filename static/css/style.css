@@ -674,6 +674,7 @@ td.cell-selected{
   background:var(--accent-dim)!important;
 }
 td[data-field]{cursor:cell}
+td[data-field]:not(.cell-editable){cursor:default}
 td[data-field]:focus{outline:none}
 td.cell-copied{animation:cellCopyFlash .6s ease-out}
 @keyframes cellCopyFlash{

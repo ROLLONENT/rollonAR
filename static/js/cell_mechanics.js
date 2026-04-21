@@ -7,11 +7,16 @@
    F4 drag fill handle (literal copy, single cell across range)
    F5 multi cell range (click drag, shift click, Cmd+A) + range copy / paste /
       delete + right click context menu
+   F6 universal: cell_mechanics.js is loaded by templates/base.html on every
+      authenticated page, so any grid built through buildGridV2 or
+      buildGroupedGrid in core.js (Directory, Songs, Pitches, Invoices,
+      Calendar) automatically inherits F1-F5 because every data cell carries
+      data-field + data-ri and the listeners are attached at document level.
+      Card-based pages (Scout, Playlists, Pitch Intelligence, Settings,
+      Dashboard) intentionally fall outside scope until they migrate to the
+      .data-grid renderer.
    --------------------------------------------------------------------------
    Replaces the V36.1 cellSelect/_selectedCell block previously in core.js.
-   The selection model is global: any <td data-field> in any rendered grid
-   gets cell selection through document-level event delegation, so every
-   grid page (Directory, Songs, Pitches, Invoices, Calendar) inherits this.
    ========================================================================== */
 (function(){
   'use strict';
@@ -62,9 +67,20 @@
     (b || a).classList.add('cell-selected');
   }
   function selectSingle(td){
+    if(!td){
+      removeFillHandle(); clearClasses();
+      activeCell = null; rangeAnchor = null; rangeFoot = null; window._selectedCell = null;
+      return;
+    }
+    // F6: short-circuit if the same single cell is already the live selection.
+    // Avoids re-painting and recreating the fill handle on every inline-edit
+    // blur that calls cellSelect(td) to restore highlight after save.
+    if(activeCell === td && rangeAnchor === td && rangeFoot === td &&
+       td.classList.contains('cell-selected') && td.querySelector('.cell-fill-handle')){
+      return;
+    }
     removeFillHandle();
     clearClasses();
-    if(!td){ activeCell = null; rangeAnchor = null; rangeFoot = null; window._selectedCell = null; return; }
     td.classList.add('cell-selected');
     activeCell = td; rangeAnchor = td; rangeFoot = td;
     attachFillHandle(td);
