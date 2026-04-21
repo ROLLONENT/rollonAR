@@ -1,7 +1,12 @@
 """
-ROLLON AR v37.7 - A&R Operating System (Airtable parity rebuild)
-v37.7 adds spreadsheet cell mechanics (selection, copy, paste, drag-fill,
-multi-cell range) across every grid. See SPREADSHEET_GRID.md.
+ROLLON AR v37.7.1 - A&R Operating System (Airtable parity rebuild)
+v37.7.1 is an SSL / drag-fill data-loss hotfix on top of v37.7:
+  - Force TLS 1.2+ on the Google Sheets client (LibreSSL 2.8.3 workaround)
+  - Harden SheetsManager._retry for ssl.SSLError / SSLEOFError / socket.timeout
+  - Drag-fill, multi-cell fill, paste, clear await backend confirmation
+    and show amber partial / red SSL-banner on failure
+  - Column hide / show toggles are optimistic (instant CSS), debounced persist
+See SPREADSHEET_GRID.md and SSL_LOSS_AUDIT_2026-04-21.md.
 Google Sheets master. No external dependencies.
 """
 
