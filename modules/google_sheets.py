@@ -1,5 +1,5 @@
 """Google Sheets Manager with retry logic."""
-import os, time, threading, logging, random
+import os, time, threading, logging, random, ssl, socket
 import httplib2
 import google_auth_httplib2
 from google.oauth2.credentials import Credentials
@@ -16,6 +16,10 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 # a version Google accepts cleanly.
 _TLS_MIN = "TLSv1_2"
 _HTTP_TIMEOUT = 30
+
+
+class WriteFailedError(Exception):
+    """Raised when a Sheets write fails after all retries (SSL / network / API)."""
 
 class SheetsManager:
     def __init__(self, spreadsheet_id, credentials_path, token_path):
@@ -56,15 +60,32 @@ class SheetsManager:
             self._service = self._build_service(self._get_creds())
         return self._service
 
+    def _is_ssl_error(self, exc):
+        """v37.7.1: classify errno/errstr as an SSL or transport glitch that merits retry."""
+        if isinstance(exc, (ssl.SSLError, ssl.SSLEOFError)):
+            return True
+        if isinstance(exc, socket.timeout):
+            return True
+        if isinstance(exc, OSError):
+            msg = str(exc).lower()
+            if 'ssl' in msg or 'wrong_version_number' in msg or 'unexpected_record' in msg:
+                return True
+            # Broken pipe / reset mid-handshake
+            if getattr(exc, 'errno', None) in (32, 54, 104):
+                return True
+        return False
+
     def _retry(self, func, max_retries=3):
-        """Execute func with exponential backoff on 429/500/503. Refresh creds on 401."""
+        """v37.7.1: exp backoff on 429/500/503 AND ssl.SSLError / SSLEOFError /
+        socket.timeout / OSError with SSL signature. Refresh creds on 401.
+        Raises WriteFailedError on SSL exhaustion so callers can surface cleanly."""
+        backoffs = [1, 2, 4]
         for attempt in range(max_retries + 1):
             try:
                 return func()
             except HttpError as e:
                 status = e.resp.status if hasattr(e, 'resp') else 0
                 if status == 401:
-                    # Refresh credentials and rebuild service
                     logging.warning("Sheets API 401: refreshing credentials")
                     self._service = None
                     try:
@@ -77,13 +98,25 @@ class SheetsManager:
                     raise
                 elif status in (429, 500, 503):
                     if attempt < max_retries:
-                        delay = (2 ** attempt) + random.uniform(0, 1)
+                        delay = backoffs[min(attempt, len(backoffs) - 1)] + random.uniform(0, 0.5)
                         logging.warning(f"Sheets API {status}: retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                         time.sleep(delay)
                         continue
                     raise
                 else:
                     raise
+            except Exception as e:
+                if self._is_ssl_error(e):
+                    if attempt < max_retries:
+                        delay = backoffs[min(attempt, len(backoffs) - 1)]
+                        logging.warning(f"Sheets SSL/transport {type(e).__name__}: {e} - retry {attempt + 1}/{max_retries} in {delay}s")
+                        # Rebuild the service so a fresh TLS handshake happens next attempt.
+                        self._service = None
+                        time.sleep(delay)
+                        continue
+                    logging.error(f"Sheets SSL exhausted after {max_retries} retries: {e}")
+                    raise WriteFailedError(f"Sheets write failed after {max_retries} retries: {e}") from e
+                raise
 
     def _invalidate_cache(self, sheet_name):
         with self._lock:
