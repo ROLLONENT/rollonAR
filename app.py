@@ -1,5 +1,7 @@
 """
-ROLLON AR v37.4.2 - A&R Operating System (Airtable parity rebuild)
+ROLLON AR v37.7 - A&R Operating System (Airtable parity rebuild)
+v37.7 adds spreadsheet cell mechanics (selection, copy, paste, drag-fill,
+multi-cell range) across every grid. See SPREADSHEET_GRID.md.
 Google Sheets master. No external dependencies.
 """
 
