@@ -4,6 +4,7 @@
    F1 single cell selection + arrow/tab/enter/escape nav
    F2 Cmd+C / Cmd+Shift+C type aware serialization
    F3 Cmd+V type aware parsing, computed cell guard
+   F4 drag fill handle (literal copy, single cell across range)
    --------------------------------------------------------------------------
    Replaces the V36.1 cellSelect/_selectedCell block previously in core.js.
    The selection model is global: any <td data-field> in any rendered grid
@@ -15,6 +16,9 @@
 
   // ---- State ----
   let activeCell = null;      // primary cell (TD) — the currently selected cell
+  let dragFilling = false;    // fill-handle drag in progress
+  let fillSource = null;      // the source cell whose value will be filled
+  let lastUndo = null;        // { cells:[{ri,field,prev,td,table}] } for Cmd+Z
 
   // ---- Small helpers (depend on globals from core.js) ----
   function currentTable(){ return window._currentTable || 'directory'; }
@@ -39,18 +43,33 @@
   function clearClasses(){
     document.querySelectorAll('td.cell-selected').forEach(c => c.classList.remove('cell-selected'));
   }
+  function removeFillHandle(){
+    document.querySelectorAll('.cell-fill-handle').forEach(h => h.remove());
+  }
   function selectSingle(td){
+    removeFillHandle();
     clearClasses();
     if(!td){ activeCell = null; window._selectedCell = null; return; }
     td.classList.add('cell-selected');
     activeCell = td;
+    attachFillHandle(td);
     // Keep compat with core.js inline-edit blur path that calls cellSelect(td)
     window._selectedCell = td;
   }
   function deselect(){
+    removeFillHandle();
     clearClasses();
     activeCell = null;
     window._selectedCell = null;
+  }
+  function attachFillHandle(td){
+    if(!td || isReadOnlyCell(td)) return;
+    if(td.querySelector('.cell-fill-handle')) return;
+    const h = document.createElement('div');
+    h.className = 'cell-fill-handle';
+    h.title = 'Drag to fill';
+    h.addEventListener('mousedown', onFillMouseDown);
+    td.appendChild(h);
   }
 
   // ---- Grid geometry ----
@@ -317,6 +336,104 @@
     }
     toastMsg('Pasted '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
   }
+
+  // ---- Drag fill (F4) ----
+  function serializeSourceValue(td){
+    // Use the cache RAW value (pipe-separated) so the fill writes back
+    // bytes the storage layer already understands. Skips the comma reformat
+    // that serializeCell uses for clipboard pastes.
+    if(!td) return '';
+    const ri = parseInt(td.dataset.ri, 10);
+    const cached = getCache(ri);
+    return cached ? (cached[td.dataset.field] || '') : (td.innerText || '').trim();
+  }
+  function onFillMouseDown(e){
+    e.preventDefault();
+    e.stopPropagation();
+    if(!activeCell) return;
+    fillSource = activeCell;
+    dragFilling = true;
+    document.body.classList.add('cell-fill-dragging');
+    document.addEventListener('mousemove', onFillMouseMove);
+    document.addEventListener('mouseup', onFillMouseUp, { once:true });
+  }
+  function onFillMouseMove(e){
+    if(!dragFilling || !activeCell) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const target = el && el.closest && el.closest('td[data-field]');
+    if(!target || !sameGrid(target, activeCell)) return;
+    const p1 = cellCoord(activeCell), pt = cellCoord(target);
+    if(!p1 || !pt) return;
+    const r1 = Math.min(p1.r, pt.r), r2 = Math.max(p1.r, pt.r);
+    const c1 = Math.min(p1.c, pt.c), c2 = Math.max(p1.c, pt.c);
+    const rows = p1.rows;
+    document.querySelectorAll('td.cell-fill-ghost').forEach(c => c.classList.remove('cell-fill-ghost'));
+    for(let r=r1; r<=r2; r++){
+      const cells = Array.from(rows[r].querySelectorAll('td[data-field]'));
+      for(let c=c1; c<=c2; c++){
+        if(cells[c]) cells[c].classList.add('cell-fill-ghost');
+      }
+    }
+  }
+  async function onFillMouseUp(){
+    document.removeEventListener('mousemove', onFillMouseMove);
+    document.body.classList.remove('cell-fill-dragging');
+    if(!dragFilling) return;
+    dragFilling = false;
+    const ghostCells = Array.from(document.querySelectorAll('td.cell-fill-ghost'));
+    ghostCells.forEach(c => c.classList.remove('cell-fill-ghost'));
+    if(!ghostCells.length || !fillSource) return;
+    const srcVal = serializeSourceValue(fillSource);
+    await fillRangeWithValue(ghostCells, srcVal);
+  }
+  async function fillRangeWithValue(cells, value){
+    const undoBucket = [];
+    let written = 0, skipped = 0;
+    for(const td of cells){
+      if(isReadOnlyCell(td)){ skipped++; continue; }
+      const field = td.dataset.field;
+      const ri = parseInt(td.dataset.ri, 10);
+      const table = currentTable();
+      const cached = getCache(ri);
+      const prev = cached ? (cached[field] || '') : '';
+      // Literal copy: source value is already canonical, no parse step.
+      if(typeof _gridSave === 'function'){
+        _gridSave(td, field, ri, table, value);
+        undoBucket.push({ td, field, ri, prev, next:value, table });
+        written++;
+      }
+    }
+    if(undoBucket.length){ lastUndo = { cells: undoBucket }; showUndoToast(undoBucket.length); }
+    toastMsg('Filled '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+' read only)' : ''));
+  }
+
+  // ---- Undo toast (F4) ----
+  function showUndoToast(n){
+    const el = document.createElement('div');
+    el.className = 'toast success cell-undo-toast';
+    el.innerHTML = 'Filled '+n+' cell'+(n===1?'':'s')+'. <button class="cell-undo-btn">Undo</button>';
+    const container = document.getElementById('toast-container');
+    if(!container) return;
+    container.appendChild(el);
+    const btn = el.querySelector('.cell-undo-btn');
+    btn.addEventListener('click', () => { doUndo(); el.remove(); });
+    setTimeout(() => el.remove(), 10000);
+  }
+  function doUndo(){
+    if(!lastUndo || !lastUndo.cells || !lastUndo.cells.length){
+      toastMsg('Nothing to undo');
+      return;
+    }
+    const batch = lastUndo.cells;
+    lastUndo = null;
+    batch.forEach(entry => {
+      if(typeof _gridSave === 'function'){
+        _gridSave(entry.td, entry.field, entry.ri, entry.table, entry.prev);
+      }
+    });
+    toastMsg('Undid '+batch.length+' cell'+(batch.length===1?'':'s'));
+  }
+
   function openEditor(td){
     if(!td || isReadOnlyCell(td)) return;
     const field = td.dataset.field;
@@ -360,6 +477,11 @@
     const tag = document.activeElement && document.activeElement.tagName;
     if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return;
     if(document.getElementById('prompt-modal') || document.getElementById('field-type-picker')) return;
+
+    // Cmd+Z = undo last drag-fill / paste / clear batch (works without an active cell).
+    if((e.metaKey || e.ctrlKey) && e.key==='z' && !e.shiftKey){
+      if(lastUndo){ e.preventDefault(); doUndo(); return; }
+    }
 
     if(!activeCell) return;
 
@@ -428,6 +550,8 @@
     copy: doCopy,
     copyRow: copyRowAsTSV,
     paste: doPaste,
-    parse: parseValueForType
+    parse: parseValueForType,
+    fill: fillRangeWithValue,
+    undo: doUndo
   };
 })();
