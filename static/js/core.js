@@ -2775,6 +2775,27 @@ function buildFilterPanel(containerId,columns,filters,onChange){
 }
 
 // ---- FIELD VISIBILITY ----
+// v37.7.1: column toggles used to fire a full /api/directory re-fetch per
+// checkbox click, so flipping 5 columns fast = 5 serial network round-trips
+// + 5 grid rebuilds. Fix:
+//   (1) applyOptimisticColVisibility() toggles display on all td/th that
+//       carry data-field="<col>" or data-col-name="<col>" so the UI updates
+//       in ~0ms,
+//   (2) scheduleFieldsOnChange() debounces the authoritative onChange
+//       (which calls page.load()) by 500ms so rapid clicks coalesce into
+//       one refetch.
+function applyOptimisticColVisibility(col, on){
+  const disp = on ? '' : 'none';
+  const safe = (col||'').replace(/"/g,'\\"');
+  document.querySelectorAll('td[data-field="'+safe+'"], th[data-field="'+safe+'"], th[data-col-name="'+safe+'"]').forEach(el => {
+    el.style.display = disp;
+  });
+}
+let _fieldsOnChangeTimer=null;
+function scheduleFieldsOnChange(fn, vc){
+  clearTimeout(_fieldsOnChangeTimer);
+  _fieldsOnChangeTimer = setTimeout(() => { fn(vc); }, 500);
+}
 function buildFieldsPanel(containerId,allCols,visCols,onChange){
   const el=document.getElementById(containerId);if(!el)return;
   window._fpConfig={containerId,allCols,visCols,onChange};
@@ -2784,13 +2805,31 @@ function buildFieldsPanel(containerId,allCols,visCols,onChange){
   html+=renderFieldListItems(allCols,visCols,'');
   html+='</div>';
   el.innerHTML=html;
-  window._tf=(col,on)=>{if(on&&!visCols.includes(col))visCols.push(col);if(!on){const i=visCols.indexOf(col);if(i>=0)visCols.splice(i,1)}onChange(visCols);buildFieldsPanel(containerId,allCols,visCols,onChange)};
-  window._taf=on=>{visCols.length=0;if(on)allCols.forEach(c=>visCols.push(c));else{const t=allCols.find(c=>c.toLowerCase()==='title'||c.toLowerCase()==='name');if(t)visCols.push(t)}onChange(visCols);buildFieldsPanel(containerId,allCols,visCols,onChange)};
+  window._tf=(col,on)=>{
+    if(on&&!visCols.includes(col))visCols.push(col);
+    if(!on){const i=visCols.indexOf(col);if(i>=0)visCols.splice(i,1)}
+    // v37.7.1: instant CSS hide/show, debounced authoritative load.
+    applyOptimisticColVisibility(col, on);
+    scheduleFieldsOnChange(onChange, visCols);
+    // Re-render panel synchronously so checkbox state matches.
+    filterFieldsList(document.getElementById('field-search')?.value || '');
+  };
+  window._taf=on=>{
+    visCols.length=0;
+    if(on)allCols.forEach(c=>visCols.push(c));
+    else{const t=allCols.find(c=>c.toLowerCase()==='title'||c.toLowerCase()==='name');if(t)visCols.push(t)}
+    // Optimistic bulk visibility: every column hides/shows immediately.
+    allCols.forEach(c => applyOptimisticColVisibility(c, visCols.includes(c)));
+    scheduleFieldsOnChange(onChange, visCols);
+    buildFieldsPanel(containerId,allCols,visCols,onChange);
+  };
   window._fmove=(col,dir)=>{
     const idx=visCols.indexOf(col);if(idx<0)return;
     const ni=idx+dir;if(ni<0||ni>=visCols.length)return;
     visCols.splice(idx,1);visCols.splice(ni,0,col);
-    onChange(visCols);buildFieldsPanel(containerId,allCols,visCols,onChange);
+    // Reorder requires re-render, no shortcut; still debounce persist.
+    scheduleFieldsOnChange(onChange, visCols);
+    buildFieldsPanel(containerId,allCols,visCols,onChange);
   };
 }
 
