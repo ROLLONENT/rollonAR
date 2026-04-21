@@ -3,6 +3,7 @@
    ==========================================================================
    F1 single cell selection + arrow/tab/enter/escape nav
    F2 Cmd+C / Cmd+Shift+C type aware serialization
+   F3 Cmd+V type aware parsing, computed cell guard
    --------------------------------------------------------------------------
    Replaces the V36.1 cellSelect/_selectedCell block previously in core.js.
    The selection model is global: any <td data-field> in any rendered grid
@@ -165,11 +166,156 @@
       .then(()=> toastMsg('Row copied as TSV'));
   }
 
-  // ---- Editor open ----
+  // ---- Read only / computed header list (F3) ----
+  // Headers whose value is computed by the backend and must silently no-op
+  // on paste / delete / drag-fill with a "This cell is computed" toast.
+  const READONLY_HEADERS = [
+    'combined first names',
+    'emails combined',
+    'date/time in la to send email',
+    'date/time in london to send email',
+    'backlinks cache',
+    'group leader',
+    'grouping override'
+  ];
+  function isReadOnlyHeader(h){
+    const n = normHeader(h);
+    if(!n) return true;
+    return READONLY_HEADERS.some(ro => n === ro || n === ro+' [use]' || n.startsWith(ro));
+  }
   function isReadOnlyCell(td){
     if(!td) return true;
+    if(isReadOnlyHeader(td.dataset.field)) return true;
     if(!td.classList.contains('cell-editable')) return true;
     return false;
+  }
+
+  // ---- Parsing (F3) ----
+  function parseDateLike(raw){
+    if(!raw) return null;
+    const s = String(raw).trim();
+    // ISO yyyy-mm-dd[ T]HH:MM[:SS]
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if(m){
+      return {
+        date: m[1]+'-'+m[2]+'-'+m[3],
+        time: m[4] ? (m[4]+':'+m[5]+':'+(m[6]||'00')) : null
+      };
+    }
+    // DD/MM/YYYY HH:MM or MM/DD/YYYY HH:MM — DD/MM preferred for UK workflow
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if(m){
+      const day = m[1].padStart(2,'0'), mon = m[2].padStart(2,'0');
+      return {
+        date: m[3]+'-'+mon+'-'+day,
+        time: m[4] ? (m[4].padStart(2,'0')+':'+m[5]+':'+(m[6]||'00')) : null
+      };
+    }
+    return null;
+  }
+  function parseValueForType(raw, type){
+    if(raw==null) return '';
+    const s = String(raw).trim();
+    if(!s) return '';
+    if(type==='number' || type==='currency' || type==='percent' || type==='rating'){
+      const cleaned = s.replace(/[^\d\.\-]/g,'');
+      const n = parseFloat(cleaned);
+      if(isNaN(n)) return { error: 'Not a number: '+s };
+      return String(n);
+    }
+    if(type==='date'){
+      const p = parseDateLike(s);
+      if(!p) return { error: 'Bad date: '+s };
+      return p.date;
+    }
+    if(type==='datetime'){
+      const p = parseDateLike(s);
+      if(!p) return { error: 'Bad datetime: '+s };
+      return p.date + (p.time ? ' '+p.time : ' 00:00:00');
+    }
+    if(type==='tag' || type==='link' || type==='autocomplete' || type==='field_type'){
+      return s.split(/\s*[,;|]\s*/).filter(Boolean).join(' | ');
+    }
+    return s;
+  }
+
+  function writeCell(td, rawValue){
+    return new Promise(resolve => {
+      if(!td || !td.dataset.field){ resolve({ ok:false, skipped:true, reason:'no-field' }); return; }
+      if(isReadOnlyCell(td)){ resolve({ ok:false, skipped:true, reason:'readonly' }); return; }
+      const field = td.dataset.field;
+      const ri = parseInt(td.dataset.ri, 10);
+      const table = currentTable();
+      const type = getFieldType(field);
+      const parsed = parseValueForType(rawValue, type);
+      if(parsed && typeof parsed === 'object' && parsed.error){
+        toastMsg(parsed.error, 'error');
+        resolve({ ok:false, skipped:true, reason:'parse', error:parsed.error });
+        return;
+      }
+      if(typeof _gridSave === 'function'){
+        _gridSave(td, field, ri, table, parsed);
+        resolve({ ok:true, skipped:false });
+      } else {
+        resolve({ ok:false, skipped:true, reason:'no-save' });
+      }
+    });
+  }
+
+  // ---- Paste (F3) ----
+  function parseClipboardGrid(text){
+    if(text==null) return [['']];
+    const s = String(text);
+    if(/[\t\n]/.test(s)){
+      const lines = s.replace(/\r\n?/g,'\n').replace(/\n$/,'').split('\n');
+      return lines.map(l => l.split('\t'));
+    }
+    return [[s]];
+  }
+  async function doPaste(){
+    if(!activeCell) return;
+    let text = '';
+    try{ text = await navigator.clipboard.readText(); }
+    catch(e){ toastMsg('Clipboard blocked','error'); return; }
+    if(text==null) return;
+    const grid = parseClipboardGrid(text);
+    const rowsN = grid.length, colsN = grid[0] ? grid[0].length : 0;
+
+    // Single-cell clipboard into single-cell selection: type-aware paste.
+    if(rowsN===1 && colsN===1){
+      if(isReadOnlyCell(activeCell)){
+        toastMsg('This cell is computed');
+        return;
+      }
+      const res = await writeCell(activeCell, grid[0][0]);
+      if(res.ok) toastMsg('Saved');
+      return;
+    }
+    // Multi-cell TSV: paste starting at the active cell as the top-left anchor.
+    const ac = (function(){
+      const tr = activeCell.closest('tr');
+      const tbody = tr && tr.parentElement;
+      if(!tbody) return null;
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const r = rows.indexOf(tr);
+      const cells = Array.from(tr.querySelectorAll('td[data-field]'));
+      const c = cells.indexOf(activeCell);
+      return { r, c, rows };
+    })();
+    if(!ac){ return; }
+    let written = 0, skipped = 0;
+    for(let r=0; r<rowsN; r++){
+      const tr = ac.rows[ac.r + r];
+      if(!tr) break;
+      const targetCells = Array.from(tr.querySelectorAll('td[data-field]'));
+      for(let c=0; c<colsN; c++){
+        const td = targetCells[ac.c + c];
+        if(!td) continue;
+        const res = await writeCell(td, grid[r][c]);
+        if(res.ok) written++; else skipped++;
+      }
+    }
+    toastMsg('Pasted '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
   }
   function openEditor(td){
     if(!td || isReadOnlyCell(td)) return;
@@ -241,6 +387,10 @@
         doCopy();
       }
     }
+    else if((e.metaKey || e.ctrlKey) && (e.key==='v' || e.key==='V')){
+      e.preventDefault();
+      doPaste();
+    }
     else if(e.key.length===1 && !e.metaKey && !e.ctrlKey && !e.altKey){
       // Type-to-edit: any printable character starts editing the current cell.
       if(activeCell.classList.contains('cell-editable')){
@@ -276,6 +426,8 @@
     state: () => ({ activeCell }),
     selectSingle, deselect, move,
     copy: doCopy,
-    copyRow: copyRowAsTSV
+    copyRow: copyRowAsTSV,
+    paste: doPaste,
+    parse: parseValueForType
   };
 })();
