@@ -316,26 +316,29 @@
     return s;
   }
 
-  function writeCell(td, rawValue){
-    return new Promise(resolve => {
-      if(!td || !td.dataset.field){ resolve({ ok:false, skipped:true, reason:'no-field' }); return; }
-      if(isReadOnlyCell(td)){ resolve({ ok:false, skipped:true, reason:'readonly' }); return; }
-      const field = td.dataset.field;
-      const ri = parseInt(td.dataset.ri, 10);
-      const table = currentTable();
-      const type = getFieldType(field);
-      const parsed = parseValueForType(rawValue, type);
-      if(parsed && typeof parsed === 'object' && parsed.error){
-        toastMsg(parsed.error, 'error');
-        resolve({ ok:false, skipped:true, reason:'parse', error:parsed.error });
-        return;
-      }
-      if(typeof _gridSave === 'function'){
-        _gridSave(td, field, ri, table, parsed);
-        resolve({ ok:true, skipped:false });
-      } else {
-        resolve({ ok:false, skipped:true, reason:'no-save' });
-      }
+  function writeCell(td, rawValue, batchId){
+    // v37.7.1: writeCell awaits the _gridSave Promise so ok/fail reflects the
+    // actual backend response, not just "fetch was dispatched". Pass a batchId
+    // to suppress per-cell error toasts (the batch aggregator shows one summary).
+    if(!td || !td.dataset.field){ return Promise.resolve({ ok:false, skipped:true, reason:'no-field' }); }
+    if(isReadOnlyCell(td)){ return Promise.resolve({ ok:false, skipped:true, reason:'readonly' }); }
+    const field = td.dataset.field;
+    const ri = parseInt(td.dataset.ri, 10);
+    const table = currentTable();
+    const type = getFieldType(field);
+    const parsed = parseValueForType(rawValue, type);
+    if(parsed && typeof parsed === 'object' && parsed.error){
+      if(!batchId) toastMsg(parsed.error, 'error');
+      return Promise.resolve({ ok:false, skipped:true, reason:'parse', error:parsed.error });
+    }
+    if(typeof _gridSave !== 'function'){
+      return Promise.resolve({ ok:false, skipped:true, reason:'no-save' });
+    }
+    if(batchId) td.dataset.batchId = batchId;
+    const p = _gridSave(td, field, ri, table, parsed);
+    return Promise.resolve(p).then(res => {
+      if(batchId) delete td.dataset.batchId;
+      return { ok: !!(res && res.success), skipped:false, error: res && res.error, td, field, ri, value: parsed };
     });
   }
 
@@ -363,8 +366,10 @@
     if(rowsN===1 && colsN===1){
       if(cells.length===1){
         if(isReadOnlyCell(cells[0])){ toastMsg('This cell is computed'); return; }
+        // v37.7.1: await confirmation, no green unless backend accepts.
         const res = await writeCell(cells[0], grid[0][0]);
         if(res.ok) toastMsg('Saved');
+        // On failure _gridSave already toasted red.
         return;
       }
       await fillRangeWithValue(cells, grid[0][0]);
@@ -375,8 +380,10 @@
     if(!anchor) return;
     const ac = cellCoord(anchor);
     if(!ac) return;
-    const undoBucket = [];
-    let written = 0, skipped = 0;
+    // v37.7.1: parallel writes, await all, aggregate toast.
+    const batchId = 'paste-'+Date.now();
+    const jobs = [];
+    let skipped = 0;
     for(let r=0; r<rowsN; r++){
       const tr = ac.rows[ac.r + r];
       if(!tr) break;
@@ -384,16 +391,22 @@
       for(let c=0; c<colsN; c++){
         const td = targetCells[ac.c + c];
         if(!td) continue;
-        const field = td.dataset.field, ri = parseInt(td.dataset.ri,10);
-        const cached = getCache(ri);
-        const prev = cached ? (cached[field]||'') : '';
-        const res = await writeCell(td, grid[r][c]);
-        if(res.ok){ undoBucket.push({ td, field, ri, prev, next:grid[r][c], table:currentTable() }); written++; }
-        else skipped++;
+        if(isReadOnlyCell(td)){ skipped++; continue; }
+        const value = grid[r][c];
+        const cached = getCache(parseInt(td.dataset.ri,10));
+        const prev = cached ? (cached[td.dataset.field]||'') : '';
+        jobs.push({ td, prev, value, promise: writeCell(td, value, batchId) });
       }
     }
-    if(undoBucket.length){ lastUndo = { cells: undoBucket }; }
-    toastMsg('Pasted '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
+    const results = await Promise.all(jobs.map(j => j.promise));
+    const succeeded = [], retryTargets = [];
+    results.forEach((res, i) => {
+      const job = jobs[i];
+      if(res.ok) succeeded.push({ td:job.td, field:job.td.dataset.field, ri:parseInt(job.td.dataset.ri,10), prev:job.prev, next:job.value, table:currentTable() });
+      else retryTargets.push({ td:job.td, value:job.value });
+    });
+    showBatchResultToast('Pasted', succeeded, retryTargets, skipped, () => fillRangeRetry(retryTargets));
+    if(succeeded.length){ lastUndo = { cells: succeeded }; }
   }
 
   // ---- Drag fill (F4) ----
@@ -454,39 +467,75 @@
       await fillRangeWithPattern(ghostCells, source);
     }
   }
+  // v37.7.1: batch-aware fill. Fires all writes in parallel, awaits all
+  // backend responses, then shows ONE accurate toast:
+  //   green  "Filled N cells, Undo"            all OK
+  //   amber  "Filled X of N, Y failed, Retry"  partial
+  //   red    "Write failed, SSL error, ..."    all failed (banner also fires)
   async function fillRangeWithValue(cells, value){
-    const undoBucket = [];
-    let written = 0, skipped = 0;
+    const batchId = 'fill-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
+    const jobs = [];
+    const retryTargets = [];
+    let skipped = 0;
     for(const td of cells){
       if(isReadOnlyCell(td)){ skipped++; continue; }
-      const field = td.dataset.field;
-      const ri = parseInt(td.dataset.ri, 10);
-      const table = currentTable();
-      const cached = getCache(ri);
-      const prev = cached ? (cached[field] || '') : '';
-      // Literal copy: source value is already canonical, no parse step.
-      if(typeof _gridSave === 'function'){
-        _gridSave(td, field, ri, table, value);
-        undoBucket.push({ td, field, ri, prev, next:value, table });
-        written++;
-      }
+      const cached = getCache(parseInt(td.dataset.ri, 10));
+      const prev = cached ? (cached[td.dataset.field] || '') : '';
+      jobs.push({ td, prev, value, promise: writeCell(td, value, batchId) });
     }
-    if(undoBucket.length){ lastUndo = { cells: undoBucket }; showUndoToast(undoBucket.length); }
-    toastMsg('Filled '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+' read only)' : ''));
+    const results = await Promise.all(jobs.map(j => j.promise));
+    const succeeded = [];
+    results.forEach((res, i) => {
+      const job = jobs[i];
+      if(res.ok) succeeded.push({ td:job.td, field:job.td.dataset.field, ri:parseInt(job.td.dataset.ri,10), prev:job.prev, next:value, table:currentTable() });
+      else retryTargets.push({ td:job.td, value });
+    });
+    showBatchResultToast('Filled', succeeded, retryTargets, skipped, () => fillRangeRetry(retryTargets));
+    if(succeeded.length){ lastUndo = { cells: succeeded }; }
   }
 
-  // ---- Undo toast (F4) ----
-  function showUndoToast(n){
-    const el = document.createElement('div');
-    el.className = 'toast success cell-undo-toast';
-    el.innerHTML = 'Filled '+n+' cell'+(n===1?'':'s')+'. <button class="cell-undo-btn">Undo</button>';
+  // v37.7.1: amber/red batch toast + retry.
+  function showBatchResultToast(verb, succeeded, failed, skipped, onRetry){
     const container = document.getElementById('toast-container');
-    if(!container) return;
+    if(!container){ toastMsg(verb+' '+succeeded.length+' cell'+(succeeded.length===1?'':'s')); return; }
+    const total = succeeded.length + failed.length;
+    const el = document.createElement('div');
+    if(failed.length === 0){
+      el.className = 'toast success cell-undo-toast';
+      el.innerHTML = verb+' '+succeeded.length+' cell'+(succeeded.length===1?'':'s')+(skipped?' (skipped '+skipped+' read only)':'')+'. <button class="cell-undo-btn">Undo</button>';
+      const btn = el.querySelector('.cell-undo-btn');
+      btn.addEventListener('click', () => { doUndo(); el.remove(); });
+      setTimeout(() => el.remove(), 10000);
+    } else if(succeeded.length === 0){
+      el.className = 'toast error';
+      el.innerHTML = '<span>Write failed, SSL error, do not edit until fixed. <button class="cell-retry-btn">Retry</button></span>';
+      const btn = el.querySelector('.cell-retry-btn');
+      btn.addEventListener('click', () => { onRetry(); el.remove(); });
+      if(typeof _showSslBanner === 'function') _showSslBanner();
+      // Do not auto-dismiss on full failure.
+    } else {
+      el.className = 'toast warning';
+      el.innerHTML = verb+' '+succeeded.length+' of '+total+', '+failed.length+' failed. <button class="cell-retry-btn">Retry</button>';
+      const btn = el.querySelector('.cell-retry-btn');
+      btn.addEventListener('click', () => { onRetry(); el.remove(); });
+      setTimeout(() => el.remove(), 20000);
+    }
     container.appendChild(el);
-    const btn = el.querySelector('.cell-undo-btn');
-    btn.addEventListener('click', () => { doUndo(); el.remove(); });
-    setTimeout(() => el.remove(), 10000);
   }
+
+  async function fillRangeRetry(targets){
+    if(!targets || !targets.length) return;
+    const batchId = 'retry-'+Date.now();
+    const results = await Promise.all(targets.map(t => writeCell(t.td, t.value, batchId)));
+    const ok = results.filter(r => r.ok).length;
+    const fail = results.length - ok;
+    if(fail === 0) toastMsg('Retry succeeded: '+ok+' cell'+(ok===1?'':'s'));
+    else toastMsg('Retry: '+ok+' ok, '+fail+' still failed','error');
+  }
+
+  // ---- Undo (F4) ----
+  // v37.7.1: undo toast is now rendered by showBatchResultToast so partial
+  // writes never get a green success toast. doUndo() stays unchanged.
   function doUndo(){
     if(!lastUndo || !lastUndo.cells || !lastUndo.cells.length){
       toastMsg('Nothing to undo');
@@ -515,8 +564,10 @@
       const p = cellCoord(s);
       srcMap.set((p.r - sc0.r)+':'+(p.c - sc0.c), serializeSourceValue(s));
     });
-    const undoBucket = [];
-    let written = 0, skipped = 0;
+    // v37.7.1: parallel writes, await all, aggregate result.
+    const batchId = 'pattern-'+Date.now();
+    const jobs = [];
+    let skipped = 0;
     for(const td of cells){
       const p = cellCoord(td);
       const dr = (p.r - ac.r) % srcRows;
@@ -524,35 +575,43 @@
       const value = srcMap.get(dr+':'+dc);
       if(value==null) continue;
       if(isReadOnlyCell(td)){ skipped++; continue; }
-      const field = td.dataset.field;
-      const ri = parseInt(td.dataset.ri, 10);
-      const table = currentTable();
-      const cached = getCache(ri);
-      const prev = cached ? (cached[field]||'') : '';
-      _gridSave(td, field, ri, table, value);
-      undoBucket.push({ td, field, ri, prev, next:value, table });
-      written++;
+      const cached = getCache(parseInt(td.dataset.ri,10));
+      const prev = cached ? (cached[td.dataset.field]||'') : '';
+      jobs.push({ td, prev, value, promise: writeCell(td, value, batchId) });
     }
-    if(undoBucket.length){ lastUndo = { cells: undoBucket }; showUndoToast(undoBucket.length); }
-    toastMsg('Filled '+written+' cells'+(skipped ? ' (skipped '+skipped+' read only)' : ''));
+    const results = await Promise.all(jobs.map(j => j.promise));
+    const succeeded = [], retryTargets = [];
+    results.forEach((res, i) => {
+      const job = jobs[i];
+      if(res.ok) succeeded.push({ td:job.td, field:job.td.dataset.field, ri:parseInt(job.td.dataset.ri,10), prev:job.prev, next:job.value, table:currentTable() });
+      else retryTargets.push({ td:job.td, value:job.value });
+    });
+    showBatchResultToast('Filled', succeeded, retryTargets, skipped, () => fillRangeRetry(retryTargets));
+    if(succeeded.length){ lastUndo = { cells: succeeded }; }
   }
 
   // ---- Delete / clear (F5) ----
+  // v37.7.1: parallel writes with honest aggregate toast.
   async function clearRange(cells){
     if(!cells || !cells.length) return;
-    const undoBucket = [];
-    let written = 0, skipped = 0;
+    const batchId = 'clear-'+Date.now();
+    const jobs = [];
+    let skipped = 0;
     for(const td of cells){
       if(isReadOnlyCell(td)){ skipped++; continue; }
-      const field = td.dataset.field, ri = parseInt(td.dataset.ri,10);
-      const cached = getCache(ri);
-      const prev = cached ? (cached[field]||'') : '';
-      const res = await writeCell(td, '');
-      if(res.ok){ undoBucket.push({ td, field, ri, prev, next:'', table:currentTable() }); written++; }
-      else skipped++;
+      const cached = getCache(parseInt(td.dataset.ri,10));
+      const prev = cached ? (cached[td.dataset.field]||'') : '';
+      jobs.push({ td, prev, value:'', promise: writeCell(td, '', batchId) });
     }
-    if(undoBucket.length){ lastUndo = { cells: undoBucket }; }
-    toastMsg('Cleared '+written+' cell'+(written===1?'':'s')+(skipped ? ' (skipped '+skipped+')' : ''));
+    const results = await Promise.all(jobs.map(j => j.promise));
+    const succeeded = [], retryTargets = [];
+    results.forEach((res, i) => {
+      const job = jobs[i];
+      if(res.ok) succeeded.push({ td:job.td, field:job.td.dataset.field, ri:parseInt(job.td.dataset.ri,10), prev:job.prev, next:'', table:currentTable() });
+      else retryTargets.push({ td:job.td, value:'' });
+    });
+    showBatchResultToast('Cleared', succeeded, retryTargets, skipped, () => fillRangeRetry(retryTargets));
+    if(succeeded.length){ lastUndo = { cells: succeeded }; }
   }
 
   function selectAllInGrid(anchor){

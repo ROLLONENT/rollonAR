@@ -1859,21 +1859,52 @@ function _gridDoEdit(td,rawH,ri,table,type,val){
   inp.addEventListener('click',e=>e.stopPropagation());
 }
 function _gridSave(td,field,ri,table,value){
+  // v37.7.1: returns a Promise that resolves {success, error, td, field, ri}
+  // so drag-fill and paste can await backend confirmation before toasting.
+  // Single-cell inline edit callers that ignore the return value still work:
+  // on failure we surface the red toast inline here to keep prior UX intact
+  // when the caller does not aggregate.
   cacheUpdate(ri,field,value);td.innerHTML=renderCell(field,value,ri,table);delete td.dataset.origHtml;td.classList.add('cell-saving');
-  fetch(table==='songs'?'/api/songs/update':(table==='invoices'?'/api/invoices/update':'/api/directory/update'),{method:'POST',headers:{'Content-Type':'application/json'},
+  const ep=table==='songs'?'/api/songs/update':(table==='invoices'?'/api/invoices/update':'/api/directory/update');
+  return fetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({field,row_index:ri,value})
-  }).then(r=>r.json()).then(d=>{td.classList.remove('cell-saving');
+  }).then(r=>r.json().catch(()=>({success:false,error:'HTTP '+r.status}))).then(d=>{
+    td.classList.remove('cell-saving');
     if(d.success){
+      td.classList.remove('cell-save-failed');
       if(d.automations?.length)d.automations.forEach(a=>toast(a));
-      // Re-sort grid after edit if sort is active (debounced)
       clearTimeout(window._resortTimer);
       window._resortTimer=setTimeout(()=>{
         const page=typeof S!=='undefined'?S:(typeof D!=='undefined'?D:null);
         if(page&&page.sortField){page.load()}
       },1500);
+      return {success:true,td,field,ri};
     }
-    else{toast(d.error||'Save failed','error')}
-  }).catch(()=>{td.classList.remove('cell-saving');toast('Network error','error')});
+    // Backend reported failure. Mark cell red so the ghost write is visible.
+    td.classList.add('cell-save-failed');
+    // Only auto-toast when the caller is NOT aggregating. A batchId flag
+    // set on the td during batch writes tells us to stay silent and let the
+    // aggregator render the single amber/red summary.
+    if(!td.dataset.batchId) toast(d.error||'Save failed','error');
+    if(d.error && /ssl|wrong_version|unexpected_record/i.test(d.error)) _showSslBanner();
+    return {success:false,error:d.error||'Save failed',td,field,ri};
+  }).catch(err=>{
+    td.classList.remove('cell-saving');
+    td.classList.add('cell-save-failed');
+    if(!td.dataset.batchId) toast('Network error','error');
+    return {success:false,error:'Network error: '+(err&&err.message||err),td,field,ri};
+  });
+}
+
+// v37.7.1: app-wide banner shown when SSL/transport errors exhaust retries.
+// Dismissible, idempotent, stays up until the Captain closes it so silent
+// data loss can never repeat.
+function _showSslBanner(msg){
+  if(document.getElementById('ssl-banner'))return;
+  const el=document.createElement('div');
+  el.id='ssl-banner';el.className='ssl-banner';
+  el.innerHTML='<span class="ssl-banner-icon">⚠</span><span class="ssl-banner-msg">'+(msg||'Write failed, SSL error. Do not edit until fixed.')+'</span><button class="ssl-banner-close" onclick="this.parentElement.remove()">Dismiss</button>';
+  document.body.appendChild(el);
 }
 function _gridPillEdit(td,field,ri,table,val,mode){
   td.dataset.origHtml=td.innerHTML;const items=splitP(val);const ac='#d4a853';
