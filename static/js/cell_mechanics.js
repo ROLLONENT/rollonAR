@@ -2,6 +2,7 @@
    ROLLON AR cell_mechanics.js  (v37.7 spreadsheet grid interactions)
    ==========================================================================
    F1 single cell selection + arrow/tab/enter/escape nav
+   F2 Cmd+C / Cmd+Shift+C type aware serialization
    --------------------------------------------------------------------------
    Replaces the V36.1 cellSelect/_selectedCell block previously in core.js.
    The selection model is global: any <td data-field> in any rendered grid
@@ -18,6 +19,19 @@
   function currentTable(){ return window._currentTable || 'directory'; }
   function isInsideEditor(el){
     return !!(el && (el.closest('.inline-edit') || el.closest('.tag-editor') || el.closest('.typeahead-wrap')));
+  }
+  function getCache(ri){ return (typeof cacheGet==='function') ? cacheGet(ri) : null; }
+  function getFieldType(h){ return (typeof fieldType==='function') ? fieldType(h) : 'text'; }
+  function toastMsg(msg, kind){
+    if(typeof toast==='function') toast(msg, kind||'success');
+    else console.log('[toast]', msg);
+  }
+  function normHeader(h){
+    return (h||'')
+      .replace(/\[\s*[✓✗∅?]+\s*\]/g,'')
+      .replace(/\[USE\]|\[LU\]|\[Sync\]/gi,'')
+      .trim()
+      .toLowerCase();
   }
 
   // ---- Selection primitives ----
@@ -75,6 +89,80 @@
       selectSingle(target);
       target.scrollIntoView({ block:'nearest', inline:'nearest' });
     }
+  }
+
+  // ---- Serialization (F2) ----
+  function serializeCell(td){
+    if(!td || !td.dataset.field) return '';
+    const field = td.dataset.field;
+    const ri = parseInt(td.dataset.ri, 10);
+    const cached = getCache(ri);
+    let raw = cached ? (cached[field] || '') : (td.innerText || '').trim();
+    if(!raw) return '';
+    const t = getFieldType(field);
+    if(t==='tag' || t==='link' || t==='autocomplete' || t==='field_type'){
+      // Multi-value fields stored pipe-separated; serialize as comma list
+      // ("Warm | Hot Lead" -> "Warm, Hot Lead") for clean clipboard pastes.
+      return String(raw).split(/\s*\|\s*/).filter(Boolean).join(', ');
+    }
+    return String(raw);
+  }
+  function csvEscape(v){
+    v = (v==null ? '' : String(v));
+    return /[",\n\r]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+  }
+  function tsvEscape(v){
+    return (v==null ? '' : String(v)).replace(/\t/g,' ').replace(/\r?\n/g,' ');
+  }
+  function copyCells(cells, format){
+    if(!cells || !cells.length) return '';
+    const byRow = new Map();
+    cells.forEach(td => {
+      const tr = td.closest('tr');
+      if(!byRow.has(tr)) byRow.set(tr, []);
+      byRow.get(tr).push(td);
+    });
+    const rows = Array.from(byRow.values());
+    if(format==='tsv'){
+      return rows.map(r => r.map(td => tsvEscape(serializeCell(td))).join('\t')).join('\n');
+    }
+    if(format==='csv'){
+      return rows.map(r => r.map(td => csvEscape(serializeCell(td))).join(',')).join('\n');
+    }
+    if(format==='json'){
+      const list = rows.map(r => {
+        const o = {};
+        r.forEach(td => { o[normHeader(td.dataset.field) || td.dataset.field] = serializeCell(td); });
+        return o;
+      });
+      return JSON.stringify(list.length===1 ? list[0] : list, null, 2);
+    }
+    if(cells.length===1) return serializeCell(cells[0]);
+    return rows.map(r => r.map(td => tsvEscape(serializeCell(td))).join('\t')).join('\n');
+  }
+  function doCopy(format){
+    const cells = activeCell ? [activeCell] : [];
+    if(!cells.length) return;
+    const fmt = format || 'plain';
+    const payload = copyCells(cells, fmt);
+    if(!payload){ toastMsg('Nothing to copy','error'); return; }
+    navigator.clipboard.writeText(payload).then(()=>{
+      cells.forEach(td => {
+        td.classList.add('cell-copied');
+        setTimeout(()=> td.classList.remove('cell-copied'), 600);
+      });
+      toastMsg('Copied');
+    }).catch(()=> toastMsg('Clipboard blocked','error'));
+  }
+
+  // ---- Row copy (Cmd+Shift+C) ----
+  function copyRowAsTSV(tr){
+    if(!tr) return;
+    const cells = Array.from(tr.querySelectorAll('td[data-field]'));
+    const headers = cells.map(td => normHeader(td.dataset.field) || td.dataset.field);
+    const vals = cells.map(td => tsvEscape(serializeCell(td)));
+    navigator.clipboard.writeText(headers.join('\t')+'\n'+vals.join('\t'))
+      .then(()=> toastMsg('Row copied as TSV'));
   }
 
   // ---- Editor open ----
@@ -144,6 +232,15 @@
       }
     }
     else if(e.key==='Escape'){ e.preventDefault(); deselect(); }
+    else if((e.metaKey || e.ctrlKey) && (e.key==='c' || e.key==='C')){
+      e.preventDefault();
+      if(e.shiftKey){
+        // Cmd+Shift+C — copy entire row as TSV (headers + values)
+        copyRowAsTSV(activeCell.closest('tr'));
+      } else {
+        doCopy();
+      }
+    }
     else if(e.key.length===1 && !e.metaKey && !e.ctrlKey && !e.altKey){
       // Type-to-edit: any printable character starts editing the current cell.
       if(activeCell.classList.contains('cell-editable')){
@@ -177,6 +274,8 @@
   // ---- Public debug hook ----
   window._cellMechanics = {
     state: () => ({ activeCell }),
-    selectSingle, deselect, move
+    selectSingle, deselect, move,
+    copy: doCopy,
+    copyRow: copyRowAsTSV
   };
 })();
