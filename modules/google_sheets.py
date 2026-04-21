@@ -1,5 +1,7 @@
 """Google Sheets Manager with retry logic."""
 import os, time, threading, logging, random
+import httplib2
+import google_auth_httplib2
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -7,6 +9,13 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+
+# v37.7.1: LibreSSL 2.8.3 on Python 3.9 intermittently negotiates a legacy TLS
+# handshake with Google, producing SSL: WRONG_VERSION_NUMBER / UNEXPECTED_RECORD
+# mid-write. Force TLS 1.2+ on the httplib2 transport so the handshake pins to
+# a version Google accepts cleanly.
+_TLS_MIN = "TLSv1_2"
+_HTTP_TIMEOUT = 30
 
 class SheetsManager:
     def __init__(self, spreadsheet_id, credentials_path, token_path):
@@ -33,10 +42,18 @@ class SheetsManager:
                 f.write(creds.to_json())
         return creds
 
+    def _build_service(self, creds):
+        """v37.7.1: build service over an httplib2.Http pinned to TLS 1.2+.
+        Works around intermittent SSL: WRONG_VERSION_NUMBER on LibreSSL 2.8.3."""
+        http = httplib2.Http(timeout=_HTTP_TIMEOUT, tls_minimum_version=_TLS_MIN)
+        authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http)
+        logging.info(f"Sheets client built with tls_minimum_version={_TLS_MIN}")
+        return build('sheets', 'v4', http=authed_http, cache_discovery=False)
+
     @property
     def service(self):
         if self._service is None:
-            self._service = build('sheets', 'v4', credentials=self._get_creds())
+            self._service = self._build_service(self._get_creds())
         return self._service
 
     def _retry(self, func, max_retries=3):
@@ -52,7 +69,7 @@ class SheetsManager:
                     self._service = None
                     try:
                         creds = self._get_creds()
-                        self._service = build('sheets', 'v4', credentials=creds)
+                        self._service = self._build_service(creds)
                     except Exception as refresh_err:
                         logging.warning(f"Credential refresh failed: {refresh_err}")
                     if attempt < max_retries:
